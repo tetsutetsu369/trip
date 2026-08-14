@@ -36,13 +36,13 @@ function bindActions() {
 }
 
 function loginScreen() {
-  root.innerHTML = `<section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>四国三郎の郷 BBQ旅</h1><p>参加者専用の旅行ポータルです。</p><button id="login">LINEでログイン</button></section>`;
+  root.innerHTML = `<main class="portal-shell"><section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>四国三郎の郷 BBQ旅</h1><p>参加者専用の旅行ポータルです。</p><div class="portal-hero-actions"><button class="portal-action primary" id="login">LINEでログイン</button></div></section></main>`;
   bindActions();
 }
 
 function pendingScreen(status) {
   const approved = status === "approved";
-  root.innerHTML = `<section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>${approved ? "ログイン情報を更新してください" : "参加申請を確認中です"}</h1><p>${approved ? "権限は承認済みです。一度ログアウトして、LINEでログインし直してください。" : "管理者が承認すると、このページを利用できます。"}</p><button id="logout">ログアウトしてやり直す</button></section>`;
+  root.innerHTML = `<main class="portal-shell"><section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>${approved ? "ログイン情報を更新してください" : "参加申請を確認中です"}</h1><p>${approved ? "権限は承認済みです。一度ログアウトして、LINEでログインし直してください。" : "管理者が承認すると、このページを利用できます。"}</p><div class="portal-hero-actions"><button class="portal-action primary" id="logout">ログアウトしてやり直す</button></div></section></main>`;
   bindActions();
 }
 
@@ -73,11 +73,14 @@ async function render() {
     const budget = settings.data?.budget;
     const total = budget ? Number(budget.cottage || 0) + Number(budget.adventure || 0) + Number(budget.purchasePerBudget || 0) * Number(budget.people || 1) : 0;
     const perPerson = Math.round(total / Math.max(1, Number(budget?.people || 1)));
-    root.innerHTML = `<section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>${escapeHtml(trip.name)}</h1><p>${escapeHtml(trip.description)}</p><small>${escapeHtml(trip.start_date)} 〜 ${escapeHtml(trip.end_date)}</small><button id="logout">ログアウト</button></section><section class="portal-section"><h2>旅程</h2>${(items.data || []).map((item) => `<article class="trip-card"><b>${escapeHtml(item.event_time?.slice(0, 5) || "未定")}</b><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.place)} ${escapeHtml(item.notes)}</p></div></article>`).join("") || "予定はまだありません。"}</section><section class="portal-section"><h2>持ち物</h2>${(packing.data || []).map((item) => `<p>${item.is_ready ? "✓" : "○"} ${escapeHtml(item.name)} ${escapeHtml(item.memo)}</p>`).join("") || "持ち物はまだありません。"}</section><section class="portal-section"><h2>予算</h2><p>現在の概算合計: <strong>¥${total.toLocaleString()}</strong></p><p>1人あたり: <strong>¥${perPerson.toLocaleString()}</strong></p></section><section class="portal-section"><h2>共有メモ</h2>${(notes.data || []).map((note) => `<article><h3>${escapeHtml(note.title)}</h3><p>${escapeHtml(note.body)}</p></article>`).join("") || "メモはまだありません。"}</section>`;
+    const itinerary = (items.data || []).map((item) => `<article class="trip-card"><div class="trip-date"><strong>${escapeHtml(item.event_time?.slice(0, 5) || "--:--")}</strong><span>${escapeHtml(item.event_date || "日程未定")}</span></div><div class="trip-copy"><span>${escapeHtml(item.place || "場所未定")}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.notes || "詳細はありません")}</p></div></article>`).join("") || `<div class="empty-state">予定はまだありません。</div>`;
+    const packingList = (packing.data || []).map((item) => `<li><span class="check-mark">${item.is_ready ? "✓" : "○"}</span><span><strong>${escapeHtml(item.name)}</strong>${item.memo ? `<small>${escapeHtml(item.memo)}</small>` : ""}</span></li>`).join("") || `<li class="empty-state">持ち物はまだありません。</li>`;
+    const notesList = (notes.data || []).map((note) => `<article class="note-card"><p>${escapeHtml(note.title)}</p><span>${escapeHtml(note.body)}</span></article>`).join("") || `<div class="empty-state">共有メモはまだありません。</div>`;
+    root.innerHTML = `<main class="portal-shell"><section class="portal-hero"><p class="portal-kicker">TRIP PORTAL</p><h1>${escapeHtml(trip.name)}</h1><p>${escapeHtml(trip.description)}</p><div class="portal-meta"><span>${escapeHtml(trip.start_date)} 〜 ${escapeHtml(trip.end_date)}</span></div><div class="portal-hero-actions"><button class="portal-action" id="logout">ログアウト</button></div></section><section class="portal-section"><div class="section-heading"><div><p>ITINERARY</p><h2>旅程</h2></div><span>${(items.data || []).length} 件の予定</span></div><div class="itinerary-list">${itinerary}</div></section><section class="portal-section"><div class="portal-summary-grid"><article class="portal-summary-card budget"><p>現在の概算合計</p><strong>¥${total.toLocaleString()}</strong><small>1人あたり ¥${perPerson.toLocaleString()}</small></article><article class="portal-summary-card packing"><p>持ち物</p><strong>${(packing.data || []).filter((item) => item.is_ready).length}<small> / ${(packing.data || []).length} 準備済み</small></strong><ul>${packingList}</ul></article></div></section><section class="portal-section"><div class="section-heading"><div><p>SHARED NOTES</p><h2>共有メモ</h2></div></div><div class="notes-grid">${notesList}</div></section></main>`;
     bindActions();
   } catch (error) {
     console.error(error);
-    root.innerHTML = `<section class="portal-hero"><h1>読み込みに失敗しました</h1><p>通信状態を確認して、再読み込みしてください。</p><button id="logout">ログアウトしてやり直す</button></section>`;
+    root.innerHTML = `<main class="portal-shell"><section class="portal-hero"><h1>読み込みに失敗しました</h1><p>通信状態を確認して、再読み込みしてください。</p><div class="portal-hero-actions"><button class="portal-action primary" id="logout">ログアウトしてやり直す</button></div></section></main>`;
     bindActions();
   }
 }
