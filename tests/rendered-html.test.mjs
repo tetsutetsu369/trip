@@ -10,7 +10,7 @@ test("renders development preview metadata", async () => {
   const { default: worker } = await import(workerUrl.href);
 
   const response = await worker.fetch(
-    new Request("http://localhost/", {
+    new Request("http://localhost/trips/shikoku-saburo-bbq-2026", {
       headers: { accept: "text/html" },
     }),
     {
