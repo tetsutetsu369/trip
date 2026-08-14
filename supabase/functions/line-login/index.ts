@@ -20,6 +20,7 @@ Deno.serve(async (request) => {
   const url = new URL(request.url);
   const appUrl = Deno.env.get("APP_URL")!;
   const callbackUrl = Deno.env.get("LINE_CALLBACK_URL")!;
+  const fullPortalCallback = "https://tetsu-trip-portal.tetsutetsu369.chatgpt.site/auth/edge-callback";
   const channelId = Deno.env.get("LINE_CHANNEL_ID")!;
   const channelSecret = Deno.env.get("LINE_CHANNEL_SECRET")!;
   const authSecret = Deno.env.get("LINE_AUTH_SECRET")!;
@@ -32,11 +33,13 @@ Deno.serve(async (request) => {
   if (!code) {
     const state = crypto.randomUUID();
     const next = url.searchParams.get("next")?.startsWith("/") ? url.searchParams.get("next")! : "/";
+    const returnTo = url.searchParams.get("return_to") === fullPortalCallback ? fullPortalCallback : appUrl;
     const authorize = new URL("https://access.line.me/oauth2/v2.1/authorize");
     authorize.search = new URLSearchParams({ response_type: "code", client_id: channelId, redirect_uri: callbackUrl, state, scope: "profile" }).toString();
     return redirect(authorize.toString(), [
       `line_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
       `line_next=${encodeURIComponent(next)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+      `line_return_to=${encodeURIComponent(returnTo)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
     ]);
   }
 
@@ -105,9 +108,11 @@ Deno.serve(async (request) => {
     }
 
     const next = decodeURIComponent(readCookie(request, "line_next") ?? "/");
-    return redirect(`${appUrl}${next}#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`, [
+    const returnTo = decodeURIComponent(readCookie(request, "line_return_to") ?? appUrl);
+    return redirect(`${returnTo}#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}&next=${encodeURIComponent(next)}`, [
       "line_state=; HttpOnly; Secure; Path=/; Max-Age=0",
       "line_next=; HttpOnly; Secure; Path=/; Max-Age=0",
+      "line_return_to=; HttpOnly; Secure; Path=/; Max-Age=0",
     ]);
   } catch (error) {
     console.error(error);
