@@ -17,8 +17,10 @@ Deno.serve(async (request) => {
   const channelSecret = Deno.env.get("LINE_CHANNEL_SECRET")!;
   const authSecret = Deno.env.get("LINE_AUTH_SECRET")!;
   const tripSlug = Deno.env.get("TRIP_SLUG") ?? "shikoku-saburo-bbq-2026";
-  const callbackUrl = `${url.origin}${url.pathname}`;
-  if (!appUrl || !channelId || !channelSecret || !authSecret) return new Response("Authentication is not configured", { status: 500 });
+  // The gateway internally rewrites the request URL.  Do not derive the OAuth
+  // callback from it: LINE requires the publicly registered HTTPS URL exactly.
+  const callbackUrl = Deno.env.get("LINE_CALLBACK_URL")!;
+  if (!appUrl || !callbackUrl || !channelId || !channelSecret || !authSecret) return new Response("Authentication is not configured", { status: 500 });
 
   const code = url.searchParams.get("code");
   if (!code) {
