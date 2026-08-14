@@ -7,20 +7,26 @@ async function digest(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-function cookie(request: Request, key: string) { return request.headers.get("cookie")?.split(";").map((value) => value.trim()).find((value) => value.startsWith(`${key}=`))?.slice(key.length + 1); }
-function redirect(url: string, cookies: string[] = []) { return new Response(null, { status: 302, headers: { location: url, "set-cookie": cookies.join(", ") } }); }
+
+function readCookie(request: Request, key: string) {
+  return request.headers.get("cookie")?.split(";").map((value) => value.trim()).find((value) => value.startsWith(`${key}=`))?.slice(key.length + 1);
+}
+
+function redirect(url: string, cookies: string[] = []) {
+  return new Response(null, { status: 302, headers: { location: url, "set-cookie": cookies.join(", ") } });
+}
 
 Deno.serve(async (request) => {
   const url = new URL(request.url);
   const appUrl = Deno.env.get("APP_URL")!;
+  const callbackUrl = Deno.env.get("LINE_CALLBACK_URL")!;
   const channelId = Deno.env.get("LINE_CHANNEL_ID")!;
   const channelSecret = Deno.env.get("LINE_CHANNEL_SECRET")!;
   const authSecret = Deno.env.get("LINE_AUTH_SECRET")!;
   const tripSlug = Deno.env.get("TRIP_SLUG") ?? "shikoku-saburo-bbq-2026";
-  // The gateway internally rewrites the request URL.  Do not derive the OAuth
-  // callback from it: LINE requires the publicly registered HTTPS URL exactly.
-  const callbackUrl = Deno.env.get("LINE_CALLBACK_URL")!;
-  if (!appUrl || !callbackUrl || !channelId || !channelSecret || !authSecret) return new Response("Authentication is not configured", { status: 500 });
+  if (!appUrl || !callbackUrl || !channelId || !channelSecret || !authSecret) {
+    return new Response("Authentication is not configured", { status: 500 });
+  }
 
   const code = url.searchParams.get("code");
   if (!code) {
@@ -28,16 +34,27 @@ Deno.serve(async (request) => {
     const next = url.searchParams.get("next")?.startsWith("/") ? url.searchParams.get("next")! : "/";
     const authorize = new URL("https://access.line.me/oauth2/v2.1/authorize");
     authorize.search = new URLSearchParams({ response_type: "code", client_id: channelId, redirect_uri: callbackUrl, state, scope: "profile" }).toString();
-    return redirect(authorize.toString(), [`line_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`, `line_next=${encodeURIComponent(next)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`]);
+    return redirect(authorize.toString(), [
+      `line_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+      `line_next=${encodeURIComponent(next)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+    ]);
   }
-  if (url.searchParams.get("state") !== cookie(request, "line_state")) return redirect(`${appUrl}/?error=state`);
+
+  if (url.searchParams.get("state") !== readCookie(request, "line_state")) return redirect(`${appUrl}/?error=state`);
+
   try {
-    const tokenResponse = await fetch("https://api.line.me/oauth2/v2.1/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUrl, client_id: channelId, client_secret: channelSecret }) });
+    const tokenResponse = await fetch("https://api.line.me/oauth2/v2.1/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: callbackUrl, client_id: channelId, client_secret: channelSecret }),
+    });
     const token = await tokenResponse.json() as { access_token?: string };
     if (!tokenResponse.ok || !token.access_token) throw new Error("LINE token exchange failed");
+
     const profileResponse = await fetch("https://api.line.me/v2/profile", { headers: { authorization: `Bearer ${token.access_token}` } });
     const profile = await profileResponse.json() as LineProfile;
     if (!profileResponse.ok || !profile.userId) throw new Error("LINE profile failed");
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -46,15 +63,54 @@ Deno.serve(async (request) => {
     const password = await digest(`${profile.userId}:${authSecret}`);
     const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
     if (created.error && !/already/i.test(created.error.message)) throw created.error;
-    const signedIn = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+
+    const signedIn = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
     const session = await signedIn.json() as { access_token?: string; refresh_token?: string; user?: { id: string } };
     if (!signedIn.ok || !session.user || !session.access_token || !session.refresh_token) throw new Error("Supabase session failed");
+
     const { data: trip, error: tripError } = await admin.from("trips").select("id").eq("slug", tripSlug).single<{ id: string }>();
     if (tripError || !trip) throw tripError ?? new Error("Trip missing");
-    await admin.from("profiles").upsert({ id: session.user.id, line_user_id: profile.userId, line_display_name: profile.displayName ?? "LINE参加者", nickname: profile.displayName ?? "LINE参加者", avatar_url: profile.pictureUrl ?? null, email }, { onConflict: "id" });
-    const membership = await admin.from("trip_members").select("id").eq("trip_id", trip.id).eq("user_id", session.user.id).maybeSingle();
-    if (!membership.data) await admin.from("trip_members").insert({ trip_id: trip.id, user_id: session.user.id, status: "pending", role: "member" });
-    const next = decodeURIComponent(cookie(request, "line_next") ?? "/");
-    return redirect(`${appUrl}${next}#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`, ["line_state=; HttpOnly; Secure; Path=/; Max-Age=0", "line_next=; HttpOnly; Secure; Path=/; Max-Age=0"]);
-  } catch { return redirect(`${appUrl}/?error=login`); }
+
+    // Legacy authentication created a different auth user for the same LINE ID.
+    // Preserve its data and copy only that verified identity's access level.
+    const { data: legacyProfile } = await admin.from("profiles").select("id").eq("line_user_id", profile.userId).maybeSingle<{ id: string }>();
+    const { error: profileError } = await admin.from("profiles").upsert({
+      id: session.user.id,
+      line_user_id: legacyProfile && legacyProfile.id !== session.user.id ? null : profile.userId,
+      line_display_name: profile.displayName ?? "LINEユーザー",
+      nickname: profile.displayName ?? "LINEユーザー",
+      avatar_url: profile.pictureUrl ?? null,
+      email,
+    }, { onConflict: "id" });
+    if (profileError) throw profileError;
+
+    const { data: membership, error: membershipError } = await admin.from("trip_members").select("id").eq("trip_id", trip.id).eq("user_id", session.user.id).maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership) {
+      const { data: legacyMembership } = legacyProfile
+        ? await admin.from("trip_members").select("role,status,approved_at").eq("trip_id", trip.id).eq("user_id", legacyProfile.id).maybeSingle()
+        : { data: null };
+      const { error: insertError } = await admin.from("trip_members").insert({
+        trip_id: trip.id,
+        user_id: session.user.id,
+        role: legacyMembership?.role ?? "member",
+        status: legacyMembership?.status ?? "pending",
+        approved_at: legacyMembership?.approved_at ?? null,
+      });
+      if (insertError) throw insertError;
+    }
+
+    const next = decodeURIComponent(readCookie(request, "line_next") ?? "/");
+    return redirect(`${appUrl}${next}#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`, [
+      "line_state=; HttpOnly; Secure; Path=/; Max-Age=0",
+      "line_next=; HttpOnly; Secure; Path=/; Max-Age=0",
+    ]);
+  } catch (error) {
+    console.error(error);
+    return redirect(`${appUrl}/?error=login`);
+  }
 });
