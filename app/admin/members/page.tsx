@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getAdminContext } from "@/lib/trips/admin";
 import MemberActions from "./MemberActions";
+import ParticipantManager from "./ParticipantManager";
 
 type Member = {
   id: string;
@@ -50,6 +51,8 @@ export default async function AdminMembersPage({
         .returns<Profile[]>()
     : { data: [] as Profile[] };
   const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+  const { data: participants } = await supabase.from("trip_participants").select("id,display_name,profile_id").eq("trip_id", context.trip.id).order("created_at");
+  const pendingMembers = (members ?? []).filter((member) => member.status === "pending").map((member) => ({ id: member.id, name: profileById.get(member.user_id)?.nickname || profileById.get(member.user_id)?.line_display_name || "参加申請者" }));
 
   return (
     <main className="admin-shell">
@@ -78,6 +81,7 @@ export default async function AdminMembersPage({
           );
         })}
       </section>
+      <ParticipantManager trip={trip} participants={participants ?? []} pendingMembers={pendingMembers} />
     </main>
   );
 }
@@ -89,4 +93,3 @@ function statusLabel(status: Member["status"]) {
 function AdminUnavailable() {
   return <main className="auth-shell"><section className="auth-card"><h1>管理画面を準備中です</h1><p>Supabaseの接続設定が完了すると利用できます。</p></section></main>;
 }
-

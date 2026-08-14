@@ -82,7 +82,7 @@ export default function BudgetPage(){
     <Link className="budget-back" href="/">← ポータルへ戻る</Link>
     <section className="budget-hero"><p className="kicker">COST PLANNER</p><h1>四国三郎の郷 BBQ旅</h1><p>2026年9月4日〜5日｜費用計算</p></section>
     <div className="save-toolbar"><div><strong>下書き（DBへは保存ボタンで反映）</strong><span>{savedAt?"最終DB保存 "+savedAt:savedPlan?"DB保存済み":"DB保存はまだありません"}</span></div><div className="save-actions"><button onClick={saveToDb}>DBへ保存</button><button onClick={exportBackup}>バックアップ</button><button onClick={()=>fileInput.current?.click()}>復元してDBへ保存</button><button className="danger" onClick={reset}>初期化</button></div><input ref={fileInput} hidden type="file" accept="application/json" onChange={restoreBackup}/></div>
-    <section className="summary-grid"><Summary label="旅行予算 合計" total={totals.grand} people={p}/><Summary label="支払済み 合計" total={totals.paid} people={p} tone="paid"/><Summary label="これから必要" total={totals.purchaseDue+totals.day} people={p} tone="due"/></section>
+    <section className="summary-grid"><Summary label="現在の総計" total={totals.grand} people={p}/><PerPersonSummary total={totals.grand} people={p}/><Summary label="支払済み 合計" total={totals.paid} people={p} tone="paid"/><Summary label="これから必要" total={totals.purchaseDue+totals.day} people={p} tone="due"/></section>
     <h2 className="budget-title">基本設定</h2>
     <div className="panel-grid">
       <section className="panel"><h3>人数・車</h3><div className="fields"><NumberField label="費用を割る人数" value={plan.people} set={v=>update("people",v)} min={1}/><NumberField label="ガソリン単価（円／L）" value={plan.gasPrice} set={v=>update("gasPrice",v)}/><NumberField label="車の実燃費（km／L）" value={plan.efficiency} set={v=>update("efficiency",v)} min={1}/><NumberField label="高速料金" value={plan.toll} set={v=>update("toll",v)}/></div></section>
@@ -108,5 +108,6 @@ export default function BudgetPage(){
 }
 function Header(){return <div className="cost-row header"><span>項目</span><span className="num">小計</span><span className="num">1人当たり</span></div>}
 function Summary({label,total,people,tone=""}:{label:string;total:number;people:number;tone?:string}){return <div className={"summary-card "+tone}><span>{label}</span><strong>{money(total)}</strong><small>1人当たり {money(total/people)}</small></div>}
+function PerPersonSummary({total,people}:{total:number;people:number}){return <div className="summary-card"><span>1人当たりの負担額</span><strong>{money(total/people)}</strong><small>現在の総計 ÷ {people}人</small></div>}
 function Total({label,total,people,totalText}:{label:string;total?:number;people?:number;totalText?:string}){return <div className="total-box"><span>{label}{total!==undefined&&people&&<small>1人当たり {money(total/people)}</small>}</span><strong>{totalText??money(total??0)}</strong></div>}
 function NumberField({label,value,set,min=0}:{label:string;value:number;set:(n:number)=>void;min?:number}){const id=useId();return <div className="field"><label htmlFor={id}>{label}</label><input id={id} type="number" min={min} value={value} onChange={e=>set(Math.max(min,positive(e.target.value)))}/></div>}
