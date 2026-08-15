@@ -29,7 +29,7 @@ export default async function PendingPage({
 
 function PendingMessage({ status }: { status?: string }) {
   const title = status === "rejected" ? "参加申請が却下されています" : status === "removed" ? "参加権限がありません" : "参加申請を受け付けました";
-  const description = status === "rejected" || status === "removed" ? "管理者に確認してください。" : "管理者の承認後、この旅行のポータルを利用できます。";
+  const description = status === "rejected" || status === "removed" ? "管理者に確認してください。" : "参加申請を送信しました。管理者が承認するまで、しばらくお待ちください。承認後、もう一度ログインすると旅行情報を確認できます。";
 
   return (
     <main className="auth-shell">
@@ -42,4 +42,3 @@ function PendingMessage({ status }: { status?: string }) {
     </main>
   );
 }
-

@@ -45,6 +45,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       preview = { itinerary: itineraryResult.data ?? [], places: placesResult.data ?? [], packing: packingResult.data ?? [], note: noteResult.data ?? null, purchases: purchaseResult.data ?? [], expenses: expenseResult.data ?? [] };
       avatarUrl = profileResult.data?.avatar_url ?? null;
     } catch (error) {
+      if (error instanceof Error && error.message.includes("NEXT_REDIRECT")) throw error;
       console.error("Failed to load trip portal", { tripSlug, error });
       redirect(`/login?error=trip_access&next=/trips/${tripSlug}`);
     }
