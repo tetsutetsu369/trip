@@ -18,6 +18,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
 
   let preview: { itinerary: ItineraryPreview[]; packing: PackingPreview[]; note: NotePreview | null; budget: BudgetPreview | null } = { itinerary: [], packing: [], note: null, budget: null };
   let isAdmin = false;
+  let avatarUrl: string | null = null;
   const supabase = await createServerSupabaseClient();
   if (supabase) {
     const { data: userData } = await supabase.auth.getUser();
@@ -28,13 +29,15 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       if (membershipError) throw membershipError;
       if (!membership || membership.status !== "approved") redirect(`/pending?trip=${tripSlug}`);
       isAdmin = membership.role === "admin";
-      const [itineraryResult, packingResult, noteResult, settingsResult] = await Promise.all([
+      const [itineraryResult, packingResult, noteResult, settingsResult, profileResult] = await Promise.all([
         supabase.from("itinerary_items").select("event_date,event_time,title,place").eq("trip_id", tripId).order("event_date").order("event_time").limit(3),
         supabase.from("packing_items").select("name,is_ready").eq("trip_id", tripId).order("created_at").limit(4),
         supabase.from("shared_notes").select("title,body").eq("trip_id", tripId).order("updated_at", { ascending: false }).limit(1).maybeSingle<NotePreview>(),
         supabase.from("trip_settings").select("budget").eq("trip_id", tripId).maybeSingle<{ budget: BudgetPreview }>(),
+        supabase.from("profiles").select("avatar_url").eq("id", userData.user.id).maybeSingle<{ avatar_url: string | null }>(),
       ]);
       preview = { itinerary: itineraryResult.data ?? [], packing: packingResult.data ?? [], note: noteResult.data ?? null, budget: settingsResult.data?.budget ?? null };
+      avatarUrl = profileResult.data?.avatar_url ?? null;
     } catch (error) {
       console.error("Failed to load trip portal", { tripSlug, error });
       redirect(`/login?error=trip_access&next=/trips/${tripSlug}`);
@@ -46,7 +49,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
   const purchaseTotal = purchases.reduce((total, purchase) => total + (purchase.cost ?? 0), 0);
 
   return <main className={`trip-portal-shell ${site.theme.heroClassName}`} style={{ "--trip-accent": site.theme.accent, "--trip-accent-dark": site.theme.accentDark, "--trip-surface": site.theme.surface, "--trip-background": site.theme.background } as CSSProperties}>
-    <TripHeader tripSlug={tripSlug} active="portal" showAdmin={isAdmin} />
+    <TripHeader tripSlug={tripSlug} active="portal" showAdmin={isAdmin} avatarUrl={avatarUrl} />
     <section className="trip-portal-hero"><div className="trip-hero-glow" aria-hidden="true" /><p className="trip-portal-eyebrow">Trip Journal</p><div className="trip-hero-title-row"><div className="trip-hero-stamp trip-hero-stamp-primary" aria-hidden="true">BBQ<br />PHOTO</div><h1>{site.title}</h1></div><p className="trip-portal-description">{site.description}</p><div className="trip-portal-meta"><span>{site.dateLabel}</span><span>{site.locationLabel}</span></div><div className="trip-hero-stamp trip-hero-stamp-secondary" aria-hidden="true">CAMPFIRE<br />PHOTO</div></section>
     <section className="trip-portal-section" aria-labelledby="trip-overview"><div className="trip-section-heading"><div><p>TRIP OVERVIEW</p><h2 id="trip-overview">旅のいま</h2></div><span>SHARED SPACE</span></div><div className="portal-preview-grid">
       <PreviewCard href={`/trips/${site.slug}/itinerary`} title="次の旅程" meta="TIMELINE">{preview.itinerary.length ? <div className="portal-mini-timeline">{preview.itinerary.map((item, index) => <div key={`${item.title}-${index}`}><b>{item.event_time?.slice(0, 5) || "未定"}</b><span>{item.title}</span><small>{item.place}</small></div>)}</div> : <p>まだ予定はありません</p>}</PreviewCard>
