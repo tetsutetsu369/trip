@@ -1,5 +1,5 @@
 -- Finance phase: keep shopping plans separate from actual expenses and settlements.
-create table public.settlements (
+create table if not exists public.settlements (
   id uuid primary key default gen_random_uuid(),
   trip_id uuid not null references public.trips(id) on delete restrict,
   from_user_id uuid not null references public.profiles(id) on delete restrict,

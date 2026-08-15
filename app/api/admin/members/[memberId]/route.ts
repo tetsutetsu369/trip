@@ -36,3 +36,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ me
   return NextResponse.json({ ok: true, member: updated });
 }
 
+export async function DELETE(request: Request, { params }: { params: Promise<{ memberId: string }> }) {
+  const { memberId } = await params;
+  const body = await request.json() as { trip?: string; version?: number };
+  const trip = body.trip ?? "shikoku-saburo-bbq-2026";
+  const supabase = await createServerSupabaseClient();
+  if (!supabase || body.version === undefined) return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+
+  const context = await getAdminContext(supabase, trip);
+  if (!context) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  const { data, error } = await supabase.rpc("admin_delete_trip_member", {
+    target_trip_id: context.trip.id,
+    target_member_id: memberId,
+    expected_version: body.version,
+  });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  const status = (data as { status?: string } | null)?.status;
+  if (status !== "ok") return NextResponse.json({ error: status ?? "delete_failed" }, { status: status === "conflict" || status === "last_admin" ? 409 : status === "not_found" ? 404 : 400 });
+  return NextResponse.json({ ok: true });
+}
