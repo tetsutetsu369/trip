@@ -13,7 +13,9 @@ function readCookie(request: Request, key: string) {
 }
 
 function redirect(url: string, cookies: string[] = []) {
-  return new Response(null, { status: 302, headers: { location: url, "set-cookie": cookies.join(", ") } });
+  const headers = new Headers({ location: url });
+  for (const cookie of cookies) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 302, headers });
 }
 
 Deno.serve(async (request) => {
@@ -47,7 +49,14 @@ Deno.serve(async (request) => {
     ]);
   }
 
-  if (url.searchParams.get("state") !== readCookie(request, "line_state")) return redirect(`${appUrl}/?error=state`);
+  const savedState = readCookie(request, "line_state");
+  if (url.searchParams.get("state") !== savedState) {
+    console.error("LINE OAuth state mismatch", {
+      hasReceivedState: Boolean(url.searchParams.get("state")),
+      hasSavedState: Boolean(savedState),
+    });
+    return redirect(`${appUrl}/?error=state`);
+  }
 
   try {
     const tokenResponse = await fetch("https://api.line.me/oauth2/v2.1/token", {
