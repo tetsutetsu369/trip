@@ -6,9 +6,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Trip Portal",
-  description: "旅行ごとの計画と費用をまとめるポータル",
-  other: { "codex-preview": "development" },
+  title: "四国三郎の郷 BBQ旅｜旅のしおり",
+  description: "徳島と高知をめぐる、一泊二日のキャンプとBBQの旅のポータル。",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };
 
