@@ -2,6 +2,25 @@
 -- The security-definer functions keep the multi-table cleanup atomic while the
 -- client remains unable to delete membership rows directly through RLS.
 
+-- The previous UI represented deletion with status = 'removed'. Clean those
+-- legacy markers once so they do not remain visible or block a future request.
+delete from public.itinerary_assignees assignments
+using public.trip_participants participants
+join public.trip_members members
+  on members.trip_id = participants.trip_id
+ and members.user_id = participants.profile_id
+where assignments.participant_id = participants.id
+  and members.status = 'removed';
+
+delete from public.trip_participants participants
+using public.trip_members members
+where members.trip_id = participants.trip_id
+  and members.user_id = participants.profile_id
+  and members.status = 'removed';
+
+delete from public.trip_members
+where status = 'removed';
+
 create or replace function public.admin_delete_trip_member(
   target_trip_id uuid,
   target_member_id uuid,
