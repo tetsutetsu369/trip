@@ -42,6 +42,9 @@ next-env.d.ts
 /.wrangler/
 /.sites-runtime/
 /.vinext/
-/docs/app-config.js
 /outputs/
 /work/
+
+# local tooling state
+/supabase/.temp/
+/.codex-remote-attachments/

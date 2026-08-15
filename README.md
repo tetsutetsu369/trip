@@ -52,6 +52,38 @@ npm run dev
 
 The legacy budget screen still uses browser storage until the DB-backed expense editor is implemented.
 
-## GitHub Pages cache policy
+## Deployment
 
-GitHub Pages releases must use build-versioned asset URLs. Keep `__BUILD_VERSION__` in source HTML/CSS asset URLs; `scripts/build-pages-config.mjs` replaces it with the deployment commit SHA during the Pages workflow. Do not replace the placeholder with a fixed date or manually incremented value.
+The app is a Cloudflare Worker. `npm run build` produces `dist/server/index.js`
+(the ESM Worker) and `dist/client` (static assets); `scripts/validate-artifact.sh`
+checks both on every build.
+
+Pushing to `main` runs `.github/workflows/deploy.yml`, which builds and then
+deploys with Wrangler. The workflow needs these GitHub repository secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Wrangler deploy credentials |
+| `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account |
+| `NEXT_PUBLIC_SUPABASE_URL` | Inlined into the client bundle at build time |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Inlined into the client bundle at build time |
+
+Server-only secrets are stored on the Worker itself, not in the repository:
+
+```bash
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put LINE_CHANNEL_ID
+npx wrangler secret put LINE_CHANNEL_SECRET
+npx wrangler secret put LINE_AUTH_SECRET
+```
+
+`TRIP_SLUG` is a non-secret value and lives in `wrangler.jsonc`.
+
+Whenever the deployed origin changes, update all three of these together:
+
+1. The Supabase Edge Function secret `APP_URL` (no trailing slash)
+2. The LINE Login channel callback URL
+3. `LINE_CALLBACK_URL` on the Edge Function
+
+The Edge Function derives its allowed return URL from `APP_URL`, so the origin
+is no longer hardcoded anywhere.

@@ -1,10 +1,11 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getAdminContext } from "@/lib/trips/admin";
+import { getTripSiteConfig } from "@/lib/trips/site-config";
 import MemberActions from "./MemberActions";
 import ParticipantManager from "./ParticipantManager";
 import TripHeader from "@/app/components/TripHeader";
+import TripTabs from "@/app/components/TripTabs";
 
 type Member = {
   id: string;
@@ -22,17 +23,13 @@ type Profile = {
   avatar_color: string | null;
 };
 
-export default async function AdminMembersPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ trip?: string }>;
-}) {
-  const { trip = "shikoku-saburo-bbq-2026" } = await searchParams;
+export default async function MembersPage({ params }: { params: Promise<{ tripSlug: string }> }) {
+  const { tripSlug } = await params;
   const supabase = await createServerSupabaseClient();
   if (!supabase) return <AdminUnavailable />;
 
-  const context = await getAdminContext(supabase, trip);
-  if (!context) redirect(`/pending?trip=${trip}`);
+  const context = await getAdminContext(supabase, tripSlug);
+  if (!context) redirect(`/pending?trip=${tripSlug}`);
 
   const { data: members, error } = await supabase
     .from("trip_members")
@@ -54,35 +51,37 @@ export default async function AdminMembersPage({
   const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
   const { data: participants } = await supabase.from("trip_participants").select("id,display_name,profile_id").eq("trip_id", context.trip.id).order("created_at");
   const pendingMembers = (members ?? []).filter((member) => member.status === "pending").map((member) => ({ id: member.id, name: profileById.get(member.user_id)?.nickname || profileById.get(member.user_id)?.line_display_name || "参加申請者" }));
+  const { data: profile } = await supabase.from("profiles").select("avatar_url").eq("id", context.user.id).maybeSingle<{ avatar_url: string | null }>();
 
   return (
-    <main className="admin-shell"><TripHeader tripSlug={trip} active="admin" showAdmin />
+    <main className="admin-shell">
+      <TripHeader tripSlug={tripSlug} tripName={getTripSiteConfig(tripSlug)?.title ?? context.trip.name} avatarUrl={profile?.avatar_url ?? null} />
       <div className="admin-heading">
         <div>
           <p className="auth-eyebrow">ADMINISTRATION</p>
           <h1>参加者を管理</h1>
           <p>{context.trip.name}</p>
         </div>
-        <Link className="admin-back-link" href={`/trips/${trip}`}>旅行ポータルへ戻る</Link>
       </div>
 
       <section className="admin-card">
         <div className="admin-table-heading"><span>参加者</span><span>状態・権限</span><span>操作</span></div>
         {(members ?? []).map((member) => {
-          const profile = profileById.get(member.user_id);
+          const memberProfile = profileById.get(member.user_id);
           return (
             <div className="admin-member-row" key={member.id}>
               <div className="admin-member-profile">
-                <span className="profile-dot" style={{ background: profile?.avatar_color ?? "#b65f32" }} />
-                <div><strong>{profile?.nickname || profile?.line_display_name || "参加者"}</strong><small>{profile?.line_display_name}</small></div>
+                <span className="profile-dot" style={{ background: memberProfile?.avatar_color ?? "#b65f32" }} />
+                <div><strong>{memberProfile?.nickname || memberProfile?.line_display_name || "参加者"}</strong><small>{memberProfile?.line_display_name}</small></div>
               </div>
               <div><span className={`member-status ${member.status}`}>{statusLabel(member.status)}</span><span className="member-role">{member.role === "admin" ? "管理者" : "参加者"}</span></div>
-              <MemberActions member={member} tripSlug={trip} currentUserId={context.user.id} />
+              <MemberActions member={member} tripSlug={tripSlug} currentUserId={context.user.id} />
             </div>
           );
         })}
       </section>
-      <ParticipantManager trip={trip} participants={participants ?? []} pendingMembers={pendingMembers} />
+      <ParticipantManager trip={tripSlug} participants={participants ?? []} pendingMembers={pendingMembers} />
+      <TripTabs tripSlug={tripSlug} active="me" />
     </main>
   );
 }

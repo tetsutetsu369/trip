@@ -1,5 +1,5 @@
-import SharedTripPage from "../shared/SharedTripPage";
-import { getSharedTripContext } from "../shared/getSharedTripContext";
+import SharedTripPage from "../_shared/SharedTripPage";
+import { getSharedTripContext } from "../_shared/getSharedTripContext";
 
 export default async function ItineraryPage({ params }: { params: Promise<{ tripSlug: string }> }) {
   const { tripSlug } = await params;
