@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import TripHeader from "@/app/components/TripHeader";
 
 const STORAGE_KEY="trip:shikoku-saburo-bbq-2026:budget:v1";
 const rentals=[["テント",1560],["タープ",510],["キャンプテーブル",510],["キャンプチェア",200],["バーベキューコンロ",410],["ガス式コンロ",410],["キャンプライト",100],["炊事用具",620],["毛布",200],["電気延長コード",100]] as const;
@@ -78,7 +79,7 @@ export default function BudgetPage(){
   const reset=()=>{if(confirm("入力内容を初期状態に戻しますか？"))setPlan(initialPlan);};
   const pair=(label:string,total:number,note?:string)=><div className="cost-row"><span>{label}{note&&<small>{note}</small>}</span><b className="num">{money(total)}</b><b className="num">{money(total/p)}</b></div>;
   const saveStatus=saveState==="saved"?"DBに共有保存済み":saveState==="saving"?"DBへ保存中…":saveState==="error"?"DB保存に失敗（端末には保存済み）":"端末保存モード";
-  return <main className="budget-shell"><p className="save-status" role="status">{saveState==="unsaved"?"下書きに変更あり・DB未保存":saveStatus}{savedAt&&`｜最終保存 ${savedAt}`}</p>
+  return <main className="budget-shell"><TripHeader tripSlug="shikoku-saburo-bbq-2026" active="budget" showAdmin /><p className="save-status" role="status">{saveState==="unsaved"?"下書きに変更あり・DB未保存":saveStatus}{savedAt&&`｜最終保存 ${savedAt}`}</p>
     <Link className="budget-back" href="/">← ポータルへ戻る</Link>
     <section className="budget-hero"><p className="kicker">COST PLANNER</p><h1>四国三郎の郷 BBQ旅</h1><p>2026年9月4日〜5日｜費用計算</p></section>
     <div className="save-toolbar"><div><strong>下書き（DBへは保存ボタンで反映）</strong><span>{savedAt?"最終DB保存 "+savedAt:savedPlan?"DB保存済み":"DB保存はまだありません"}</span></div><div className="save-actions"><button onClick={saveToDb}>DBへ保存</button><button onClick={exportBackup}>バックアップ</button><button onClick={()=>fileInput.current?.click()}>復元してDBへ保存</button><button className="danger" onClick={reset}>初期化</button></div><input ref={fileInput} hidden type="file" accept="application/json" onChange={restoreBackup}/></div>
