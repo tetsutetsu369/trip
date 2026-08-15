@@ -35,6 +35,7 @@ export default async function MembersPage({ params }: { params: Promise<{ tripSl
     .from("trip_members")
     .select("id, user_id, role, status, version")
     .eq("trip_id", context.trip.id)
+    .in("status", ["pending", "approved"])
     .order("created_at", { ascending: true })
     .returns<Member[]>();
 
@@ -68,11 +69,14 @@ export default async function MembersPage({ params }: { params: Promise<{ tripSl
         <div className="admin-table-heading"><span>参加者</span><span>状態・権限</span><span>操作</span></div>
         {(members ?? []).map((member) => {
           const memberProfile = profileById.get(member.user_id);
+          const memberName = member.status === "pending"
+            ? memberProfile?.line_display_name || memberProfile?.nickname || "参加申請者"
+            : memberProfile?.nickname || memberProfile?.line_display_name || "参加者";
           return (
             <div className="admin-member-row" key={member.id}>
-              <div className="admin-member-profile">
-                <span className="profile-dot" style={{ background: memberProfile?.avatar_color ?? "#b65f32" }} />
-                <div><strong>{memberProfile?.nickname || memberProfile?.line_display_name || "参加者"}</strong><small>{memberProfile?.line_display_name}</small></div>
+              <div className={`admin-member-profile ${member.status === "pending" ? "is-pending" : ""}`}>
+                {memberProfile?.avatar_url ? <img className="profile-avatar" src={memberProfile.avatar_url} alt="" /> : <span className="profile-dot" style={{ background: memberProfile?.avatar_color ?? "#b65f32" }} aria-hidden>{memberName.slice(0, 1)}</span>}
+                <div><strong>{memberName}</strong><small>{member.status === "pending" ? `LINE名: ${memberProfile?.line_display_name || "取得できません"}` : memberProfile?.line_display_name ? `LINE名: ${memberProfile.line_display_name}` : "LINE情報なし"}</small></div>
               </div>
               <div><span className={`member-status ${member.status}`}>{statusLabel(member.status)}</span><span className="member-role">{member.role === "admin" ? "管理者" : "参加者"}</span></div>
               <MemberActions member={member} tripSlug={tripSlug} currentUserId={context.user.id} />

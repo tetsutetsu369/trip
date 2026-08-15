@@ -21,6 +21,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ me
   if (!target) return NextResponse.json({ error: "not_found" }, { status: 404 });
   if (target.user_id === context.user.id) return NextResponse.json({ error: "self_change" }, { status: 400 });
 
+  if (body.status === "rejected") {
+    const { data, error } = await supabase.rpc("admin_delete_trip_member", {
+      target_trip_id: context.trip.id,
+      target_member_id: memberId,
+      expected_version: body.version ?? target.version,
+    });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const deleteStatus = (data as { status?: string } | null)?.status;
+    if (deleteStatus !== "ok") return NextResponse.json({ error: deleteStatus ?? "delete_failed" }, { status: deleteStatus === "conflict" || deleteStatus === "last_admin" ? 409 : deleteStatus === "not_found" ? 404 : 400 });
+    return NextResponse.json({ ok: true, member: null });
+  }
+
   const removingAdmin = target.role === "admin" && (body.status === "removed" || body.role === "member");
   if (removingAdmin) {
     const { count } = await supabase.from("trip_members").select("id", { count: "exact", head: true }).eq("trip_id", context.trip.id).eq("role", "admin").eq("status", "approved");
