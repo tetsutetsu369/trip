@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tetsu-trip-portal",
+
+  // vinext のビルド成果物。dist/server/index.js が ESM の default.fetch を持つ
+  // Worker、dist/client が静的アセット。scripts/validate-artifact.sh が
+  // ビルドのたびにこの2つを検証している。
+  // Cloudflare の Vite プラグインがこの設定と vite.config.ts を突き合わせて
+  // dist/server/wrangler.json を生成し、パスをそちら基準に書き換える。
+  // nodejs_compat は vite.config.ts 側で付いているので、ここには書かない
+  // （両方に書くとフラグが重複する）。
+  "main": "dist/server/index.js",
+  "compatibility_date": "2025-09-01",
+
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS"
+  },
+
+  // 公開値のみ。SUPABASE_SERVICE_ROLE_KEY・LINE_CHANNEL_SECRET・
+  // LINE_AUTH_SECRET・LINE_CHANNEL_ID は `wrangler secret put` で登録する。
+  // ここに書くとリポジトリに平文で残るため入れない。
+  "vars": {
+    "TRIP_SLUG": "shikoku-saburo-bbq-2026"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+
+  // next/image を使い始めたら、worker/index.ts の /_vinext/image が
+  // env.IMAGES を必要とするので "images": { "binding": "IMAGES" } を足す。
+  // いまは素の <img> と CSS の background-image だけなので不要。
+}

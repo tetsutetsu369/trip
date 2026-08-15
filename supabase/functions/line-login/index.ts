@@ -18,9 +18,13 @@ function redirect(url: string, cookies: string[] = []) {
 
 Deno.serve(async (request) => {
   const url = new URL(request.url);
-  const appUrl = Deno.env.get("APP_URL")!;
+  // 末尾スラッシュを落としておく。付いたままだと `${appUrl}/?error=` が
+  // `//?error=` になり、コールバックの一致判定も崩れる。
+  const appUrl = (Deno.env.get("APP_URL") ?? "").replace(/\/+$/, "");
   const callbackUrl = Deno.env.get("LINE_CALLBACK_URL")!;
-  const fullPortalCallback = "https://tetsu-trip-portal.tetsutetsu369.chatgpt.site/auth/edge-callback";
+  // 戻り先の許可リスト。配信先を変えても APP_URL の変更だけで済むよう、
+  // オリジンを直書きせずここから組み立てる。
+  const fullPortalCallback = `${appUrl}/auth/edge-callback`;
   const channelId = Deno.env.get("LINE_CHANNEL_ID")!;
   const channelSecret = Deno.env.get("LINE_CHANNEL_SECRET")!;
   const authSecret = Deno.env.get("LINE_AUTH_SECRET")!;

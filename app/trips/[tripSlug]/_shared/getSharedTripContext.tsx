@@ -21,7 +21,7 @@ export async function getSharedTripContext(tripSlug: string, nextPath: string) {
     if (participantsError) throw participantsError;
     const site = getTripSiteConfig(tripSlug);
     if (!site) throw new Error("Trip site configuration not found");
-    return { tripId, tripSlug, userId: userData.user.id, tripDates: { start: site.startDate, end: site.endDate }, participants: participants ?? [], isAdmin: membership.role === "admin", avatarUrl: profileResult.data?.avatar_url ?? null };
+    return { tripId, tripSlug, tripName: site.title, userId: userData.user.id, tripDates: { start: site.startDate, end: site.endDate }, participants: participants ?? [], isAdmin: membership.role === "admin", avatarUrl: profileResult.data?.avatar_url ?? null };
   } catch (error) {
     if (error instanceof Error && error.message.includes("NEXT_REDIRECT")) throw error;
     redirect(`/login?error=trip_access&next=${encodeURIComponent(nextPath)}`);
