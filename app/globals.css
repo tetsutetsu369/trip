@@ -33,3 +33,15 @@
 /* Bottom tab bar */
 .trip-tabs{position:fixed;left:0;right:0;bottom:0;z-index:60;display:grid;grid-template-columns:repeat(5,1fr);padding:0 max(0px,calc((100vw - 900px)/2)) env(safe-area-inset-bottom);background:#12100ef2;backdrop-filter:blur(14px);border-top:1px solid var(--line)}.trip-tabs a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 2px 11px;color:var(--muted);font-size:.6rem;text-decoration:none}.trip-tabs a svg{width:19px;height:19px}.trip-tabs a:hover{color:var(--soft)}.trip-tabs a.is-active{color:var(--accent)}.trip-portal-shell,.shared-shell,.budget-shell,.admin-shell,.profile-shell{padding-bottom:calc(78px + env(safe-area-inset-bottom))}.admin-area{margin-top:16px}.admin-entry{display:inline-flex;padding:9px 13px;border:1px solid #c8b6a055;border-radius:8px;color:var(--soft);font-size:.75rem;text-decoration:none}.admin-entry:hover{border-color:var(--accent);color:var(--accent)}
 .backup-actions{margin-top:14px}.backup-actions>p{margin:0 0 9px;color:var(--muted);font-size:.72rem;line-height:1.7}.backup-actions>div{display:flex;flex-wrap:wrap;gap:6px}.backup-actions button{padding:8px 11px;border:1px solid #c8b6a055;border-radius:8px;background:transparent;color:var(--soft);font-size:.72rem;cursor:pointer}.backup-actions button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}.backup-actions button:disabled{opacity:.5;cursor:wait}.backup-status{margin:9px 0 0;color:var(--accent);font-size:.7rem}
+
+/* Readable light theme: handwritten UI with a Mincho hero title */
+:root{--ink:#43362e;--muted:#786b60;--soft:#66574c;--accent:#c65f32;--line:#8f796633;--panel:#fffaf4;--bg:#f5eee6;--danger:#b34d3b}
+body{color:var(--ink);background:var(--bg);font-family:"Yomogi","Hiragino Maru Gothic ProN","Yu Gothic",cursive;letter-spacing:.02em;line-height:1.7}
+.trip-portal-shell,.shared-shell,.budget-shell,.auth-shell,.admin-shell{--ink:#43362e;--muted:#786b60;--soft:#66574c;--accent:var(--trip-accent,#c65f32);--line:#8f796633;background:var(--trip-background,#f5eee6);color:var(--ink)}
+.trip-portal-hero{background-color:#f1e8de;background-image:linear-gradient(90deg,#f5eee6f5 0%,#f5eee6ce 46%,#f5eee64d 100%),url("/hero-bbq-riverside.png")}
+.trip-portal-hero h1{font-family:"Shippori Mincho","Hiragino Mincho ProN",YuMincho,serif;letter-spacing:-.02em}
+.trip-header,.trip-tabs{background:#f5eee6e8;color:var(--ink)}
+.trip-header-mark,.portal-preview-card>p:first-child{font-family:inherit}
+.trip-hero-stamp{background:repeating-linear-gradient(45deg,#fffaf0,#fffaf0 6px,#f0e3d5 6px,#f0e3d5 12px);color:var(--soft)}
+.field input,.field textarea,.cell-input,.draft-form input,.draft-form select,.draft-form textarea,.participant-manager input,.participant-manager select,.profile-form input,.profile-form textarea{background:#fffdf9;color:var(--ink)}
+.assignee-chips span{color:#fffaf4}.save-button{color:#fffaf4}.participant-manager form button{color:#fffaf4}.profile-avatar{color:#fffaf4}

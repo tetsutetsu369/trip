@@ -10,10 +10,10 @@ export const shikokuSaburoSite: TripSiteConfig = {
   dateLabel: "2026年9月4日〜5日",
   locationLabel: "徳島・高知",
   theme: {
-    accent: "#e2793f",
-    accentDark: "#e2793f",
-    surface: "#1c1512",
-    background: "#12100e",
+    accent: "#c65f32",
+    accentDark: "#9d4322",
+    surface: "#fffaf4",
+    background: "#f5eee6",
     heroClassName: "trip-theme-shikoku",
   },
 };
