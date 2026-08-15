@@ -49,7 +49,7 @@ export default async function MembersPage({ params }: { params: Promise<{ tripSl
         .returns<Profile[]>()
     : { data: [] as Profile[] };
   const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
-  const { data: participants } = await supabase.from("trip_participants").select("id,display_name,profile_id").eq("trip_id", context.trip.id).order("created_at");
+  const { data: participants } = await supabase.from("trip_participants").select("id,display_name,profile_id,version").eq("trip_id", context.trip.id).order("created_at");
   const pendingMembers = (members ?? []).filter((member) => member.status === "pending").map((member) => ({ id: member.id, name: profileById.get(member.user_id)?.nickname || profileById.get(member.user_id)?.line_display_name || "参加申請者" }));
   const { data: profile } = await supabase.from("profiles").select("avatar_url").eq("id", context.user.id).maybeSingle<{ avatar_url: string | null }>();
 
