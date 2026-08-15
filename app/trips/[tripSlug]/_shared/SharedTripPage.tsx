@@ -36,17 +36,17 @@ export default function SharedTripPage({
   const [editPacking, setEditPacking] = useState<Packing | null>(null);
   const [editNote, setEditNote] = useState<Note | null>(null);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("保存済みデータを読み込み中…");
+  const [status, setStatus] = useState("読み込み中…");
   const [now, setNow] = useState(() => new Date());
 
-  const load = async (message = "最新の保存内容を表示中") => {
+  const load = async (message = "みんなに共有済み") => {
     if (!supabase) return;
     const [i, p, n] = await Promise.all([
       supabase.from("itinerary_items").select("id,event_date,event_time,title,place,notes,sort_order,version").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
     ]);
-    if (i.error || p.error || n.error) { setStatus("保存済みデータを読み込めませんでした"); return; }
+    if (i.error || p.error || n.error) { setStatus("読み込めませんでした"); return; }
     const items = [...(i.data ?? [])].sort((a, b) => `${a.event_date ?? "9999"}${a.event_time ?? "99"}`.localeCompare(`${b.event_date ?? "9999"}${b.event_time ?? "99"}`) || a.sort_order - b.sort_order);
     const a = items.length ? await supabase.from("itinerary_assignees").select("itinerary_item_id,participant_id").in("itinerary_item_id", items.map((item) => item.id)) : { data: [], error: null };
     if (a.error) { setStatus("担当者データを読み込めませんでした"); return; }
