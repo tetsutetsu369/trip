@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getAdminContext } from "@/lib/trips/admin";
 import MemberActions from "./MemberActions";
 import ParticipantManager from "./ParticipantManager";
+import TripHeader from "@/app/components/TripHeader";
 
 type Member = {
   id: string;
@@ -55,7 +56,7 @@ export default async function AdminMembersPage({
   const pendingMembers = (members ?? []).filter((member) => member.status === "pending").map((member) => ({ id: member.id, name: profileById.get(member.user_id)?.nickname || profileById.get(member.user_id)?.line_display_name || "参加申請者" }));
 
   return (
-    <main className="admin-shell">
+    <main className="admin-shell"><TripHeader tripSlug={trip} active="admin" showAdmin />
       <div className="admin-heading">
         <div>
           <p className="auth-eyebrow">ADMINISTRATION</p>

@@ -1,55 +1,43 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const root = document.querySelector("#shared-app");
-const config = window.TRIP_CONFIG;
-const basePath = "../..";
+const root = document.querySelector("#shared-app"); const config = window.TRIP_CONFIG; const basePath = window.TRIP_BASE || "../.."; const view = window.TRIP_VIEW || "all";
+const esc = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
+const path = (name) => `${basePath}/shikoku-saburo-bbq-2026/${name}/`;
+const pageTitle = { all: "共有データ", itinerary: "旅程を管理", packing: "持ち物を管理", notes: "共有メモ", profile: "プロフィール", admin: "管理者画面" };
+const header = (active, role) => `<header class="trip-header"><a class="trip-header-brand" href="${basePath}/"><span class="trip-header-mark">TJ</span><span><strong>Trip Journal</strong><small>四国三郎の郷 BBQ旅</small></span></a><nav class="trip-header-nav"><a class="${active === "all" ? "is-active" : ""}" href="${basePath}/">ポータル</a><a class="${active === "itinerary" ? "is-active" : ""}" href="${path("itinerary")}">旅程</a><a href="${path("budget")}">費用計算</a><a class="${active === "packing" ? "is-active" : ""}" href="${path("packing")}">持ち物</a><a class="${active === "notes" ? "is-active" : ""}" href="${path("notes")}">メモ</a><a class="${active === "profile" ? "is-active" : ""}" href="${path("profile")}">プロフィール</a>${role === "admin" ? `<a class="admin-link ${active === "admin" ? "is-active" : ""}" href="${path("admin")}">管理者</a>` : ""}</nav></header>`;
+const login = () => { location.href = `${config.supabaseUrl}/functions/v1/line-login?next=${encodeURIComponent(location.pathname)}`; };
 
-const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  "'": "&#39;",
-  '"': "&quot;",
-})[char]);
-
-function login() {
-  const next = `${location.pathname}${location.hash}`;
-  location.href = `${config.supabaseUrl}/functions/v1/line-login?next=${encodeURIComponent(next)}`;
+async function main() {
+  if (!config) throw new Error("Missing public configuration");
+  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey); const { data: { user } } = await supabase.auth.getUser();
+  if (!user) { root.innerHTML = `<main class="detail-shell"><section class="detail-hero"><h1>${pageTitle[view]}</h1><p>利用するにはログインしてください。</p><button class="portal-action primary" id="login">LINEでログイン</button></section></main>`; document.querySelector("#login").onclick = login; return; }
+  const { data: trip } = await supabase.from("trips").select("id,name,description,start_date,end_date").eq("slug", config.tripSlug).maybeSingle(); if (!trip) throw new Error("Trip not found");
+  const { data: membership } = await supabase.from("trip_members").select("role,status").eq("trip_id", trip.id).eq("user_id", user.id).maybeSingle(); if (membership?.status !== "approved") throw new Error("Not approved");
+  if (view === "profile") return profilePage(supabase, trip, user);
+  if (view === "admin") return adminPage(supabase, trip, membership.role);
+  const [items, packing, notes] = await Promise.all([supabase.from("itinerary_items").select("id,event_date,event_time,title,place,notes,sort_order,version").eq("trip_id", trip.id).order("event_date").order("event_time"), supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", trip.id).order("created_at"), supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", trip.id).order("updated_at", { ascending: false })]);
+  if (items.error || packing.error || notes.error) throw new Error("Trip data could not be loaded");
+  const data = { items: items.data || [], packing: packing.data || [], notes: notes.data || [] }; renderShared(supabase, trip, data, membership.role);
 }
 
-async function render() {
-  if (!config) {
-    root.innerHTML = `<main class="detail-shell"><section class="detail-hero"><h1>公開設定を読み込めませんでした</h1><p>しばらくしてから再読み込みしてください。</p></section></main>`;
-    return;
-  }
-
-  const supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      root.innerHTML = `<main class="detail-shell"><section class="detail-hero"><p class="portal-kicker">TRIP DETAILS</p><h1>旅程の詳細</h1><p>詳細を表示するにはログインしてください。</p><button class="portal-action primary" id="login">LINEでログイン</button></section></main>`;
-      document.querySelector("#login")?.addEventListener("click", login);
-      return;
-    }
-
-    const { data: trip } = await supabase.from("trips").select("id,name,description,start_date,end_date").eq("slug", config.tripSlug).maybeSingle();
-    if (!trip) throw new Error("Trip not found");
-    const [items, packing, notes] = await Promise.all([
-      supabase.from("itinerary_items").select("event_date,event_time,title,place,notes").eq("trip_id", trip.id).order("event_date").order("event_time"),
-      supabase.from("packing_items").select("name,memo,is_ready").eq("trip_id", trip.id).order("created_at"),
-      supabase.from("shared_notes").select("title,body").eq("trip_id", trip.id).order("updated_at", { ascending: false }),
-    ]);
-    if (items.error || packing.error || notes.error) throw new Error("Trip data could not be loaded");
-
-    const itinerary = (items.data || []).map((item) => `<article class="detail-item"><div class="detail-time"><strong>${escapeHtml(item.event_time?.slice(0, 5) || "未定")}</strong><span>${escapeHtml(item.event_date || "日程未定")}</span></div><div><h3>${escapeHtml(item.title)}</h3>${item.place ? `<p class="detail-place">${escapeHtml(item.place)}</p>` : ""}${item.notes ? `<p>${escapeHtml(item.notes)}</p>` : ""}</div></article>`).join("") || `<p class="empty-state">予定はまだありません。</p>`;
-    const packingList = (packing.data || []).map((item) => `<li><span class="check-mark">${item.is_ready ? "✓" : "○"}</span><span><strong>${escapeHtml(item.name)}</strong>${item.memo ? `<small>${escapeHtml(item.memo)}</small>` : ""}</span></li>`).join("") || `<li class="empty-state">持ち物はまだありません。</li>`;
-    const notesList = (notes.data || []).map((note) => `<article class="note-card"><p>${escapeHtml(note.title)}</p><span>${escapeHtml(note.body)}</span></article>`).join("") || `<p class="empty-state">共有メモはまだありません。</p>`;
-
-    root.innerHTML = `<main class="detail-shell"><a class="detail-back" href="${basePath}/">← ポータルへ戻る</a><section class="detail-hero"><p class="portal-kicker">TRIP DETAILS</p><h1>${escapeHtml(trip.name)}</h1><p>${escapeHtml(trip.description || "旅の詳細情報")}</p><div class="portal-meta"><span>${escapeHtml(trip.start_date)} 〜 ${escapeHtml(trip.end_date)}</span></div></section><section id="itinerary" class="detail-section"><div class="section-heading"><div><p>ITINERARY</p><h2>旅程の詳細</h2></div><span>${(items.data || []).length} 件</span></div><div class="detail-list">${itinerary}</div></section><section id="packing" class="detail-section"><div class="section-heading"><div><p>PACKING</p><h2>持ち物</h2></div></div><ul class="detail-packing">${packingList}</ul></section><section id="notes" class="detail-section"><div class="section-heading"><div><p>SHARED NOTES</p><h2>共有メモ</h2></div></div><div class="notes-grid">${notesList}</div></section><p class="detail-footer"><a class="section-link" href="${basePath}/shikoku-saburo-bbq-2026/">費用の詳細を見る →</a></p></main>`;
-  } catch (error) {
-    console.error(error);
-    root.innerHTML = `<main class="detail-shell"><section class="detail-hero"><h1>読み込みに失敗しました</h1><p>通信状態を確認して、再読み込みしてください。</p><a class="portal-action primary" href="${basePath}/">ポータルへ戻る</a></section></main>`;
-  }
+function renderShared(supabase, trip, data, role) {
+  const now = Date.now(); const current = data.items.reduce((index, item, i) => new Date(`${item.event_date || trip.start_date}T${item.event_time || "00:00"}`).getTime() <= now ? i : index, -1); const next = data.items.findIndex((item) => new Date(`${item.event_date || trip.start_date}T${item.event_time || "00:00"}`).getTime() > now);
+  const itinerary = data.items.map((item, i) => `<article class="detail-item ${i === current ? "is-current" : ""}"><div class="detail-time"><strong>${esc(item.event_time?.slice(0, 5) || "未定")}</strong><span>${esc(item.event_date || "")}</span></div><div class="timeline-card"><span class="timeline-state">${i === current ? "いまここ" : i === next ? "次" : "確定"}</span><button class="edit-button" data-edit-itinerary="${item.id}">編集</button><h3>${esc(item.title)}</h3><p class="detail-place">${esc(item.place || "場所未定")}</p><p>${esc(item.notes || "")}</p></div></article>`).join("") || `<p class="empty-state">まだ確定した予定はありません。</p>`;
+  const packing = data.packing.map((item) => `<div class="saved-row"><span class="packing-state ${item.is_ready ? "ready" : "todo"}">${item.is_ready ? "準備済み" : "未準備"}</span><strong>${esc(item.name)}</strong><span>${esc(item.memo || "")}</span><button class="edit-button" data-edit-packing="${item.id}">編集</button></div>`).join("") || `<p class="empty-state">まだ確定した持ち物はありません。</p>`;
+  const notes = data.notes.map((item) => `<div class="saved-row"><strong>${esc(item.title)}</strong><span>${esc(item.body || "")}</span><button class="edit-button" data-edit-note="${item.id}">編集</button></div>`).join("") || `<p class="empty-state">まだ保存済みのメモはありません。</p>`;
+  const itinerarySection = `<section class="detail-section confirmed-panel"><div class="section-heading"><div><p>CONFIRMED ITINERARY</p><h2>確定した予定</h2></div><span>${current >= 0 ? `いま：${esc(data.items[current].title)}` : next >= 0 ? `次：${esc(data.items[next].title)}` : "現在位置"}</span></div><div class="detail-list timeline">${itinerary}</div></section><section class="detail-section draft-panel"><div class="section-heading"><div><p>ADD ITINERARY</p><h2>追加する予定</h2></div><span>入力中・未保存</span></div><form id="add-itinerary" class="draft-form"><input name="title" required placeholder="予定名"><input name="place" placeholder="場所"><input name="event_date" type="date" value="${trip.start_date}"><input name="event_time" type="time"><textarea name="notes" placeholder="メモ"></textarea><button class="portal-action primary">この予定を保存</button></form></section>`;
+  const packingSection = `<section class="detail-section confirmed-panel"><div class="section-heading"><div><p>CONFIRMED PACKING</p><h2>確定した持ち物</h2></div><span>DB保存済み</span></div>${packing}</section><section class="detail-section draft-panel"><div class="section-heading"><div><p>ADD PACKING</p><h2>追加する持ち物</h2></div><span>入力中・未保存</span></div><form id="add-packing" class="draft-form"><input name="name" required placeholder="持ち物名"><input name="memo" placeholder="担当者・数量など"><button class="portal-action primary">持ち物を保存</button></form></section>`;
+  const notesSection = `<section class="detail-section confirmed-panel"><div class="section-heading"><div><p>CONFIRMED NOTES</p><h2>保存済みのメモ</h2></div><span>DB保存済み</span></div>${notes}</section><section class="detail-section draft-panel"><div class="section-heading"><div><p>ADD NOTE</p><h2>追加するメモ</h2></div><span>入力中・未保存</span></div><form id="add-note" class="draft-form"><input name="title" required placeholder="メモの題名"><textarea name="body" placeholder="内容"></textarea><button class="portal-action primary">メモを保存</button></form></section>`;
+  const sections = view === "itinerary" ? itinerarySection : view === "packing" ? packingSection : view === "notes" ? notesSection : itinerarySection + packingSection + notesSection;
+  root.innerHTML = `<main class="detail-shell">${header(view === "all" ? "all" : view, role)}<section class="detail-hero"><p class="portal-kicker">TRIP JOURNAL</p><h1>${pageTitle[view]}</h1><p>${esc(trip.name)}｜${esc(trip.start_date)} — ${esc(trip.end_date)}</p></section>${sections}</main>`;
+  document.querySelector("#add-itinerary")?.addEventListener("submit", async (event) => { event.preventDefault(); const f = new FormData(event.target); await supabase.from("itinerary_items").insert({ trip_id: trip.id, title: f.get("title"), place: f.get("place"), event_date: f.get("event_date"), event_time: f.get("event_time") || null, notes: f.get("notes"), sort_order: data.items.length }); location.reload(); });
+  document.querySelector("#add-packing")?.addEventListener("submit", async (event) => { event.preventDefault(); const f = new FormData(event.target); await supabase.from("packing_items").insert({ trip_id: trip.id, name: f.get("name"), memo: f.get("memo") }); location.reload(); });
+  document.querySelector("#add-note")?.addEventListener("submit", async (event) => { event.preventDefault(); const f = new FormData(event.target); await supabase.from("shared_notes").insert({ trip_id: trip.id, title: f.get("title"), body: f.get("body") }); location.reload(); });
+  document.querySelectorAll("[data-edit-itinerary]").forEach((button) => button.addEventListener("click", () => alert("編集はNext側の旅程画面で利用できます。GitHub Pagesでは追加と確認を優先しています。")));
+  document.querySelectorAll("[data-edit-packing], [data-edit-note]").forEach((button) => button.addEventListener("click", () => alert("編集はNext側の独立画面で利用できます。")));
 }
 
-render();
+async function profilePage(supabase, trip, user) { const { data: profile } = await supabase.from("profiles").select("nickname,line_display_name,bio,avatar_color").eq("id", user.id).maybeSingle(); root.innerHTML = `<main class="detail-shell">${header("profile", "member")}<section class="detail-hero"><p class="portal-kicker">YOUR PROFILE</p><h1>プロフィールを編集</h1></section><section class="detail-section"><form id="profile-form" class="draft-form"><label>表示名<input name="nickname" required value="${esc(profile?.nickname || "")}"></label><p>LINE表示名：${esc(profile?.line_display_name || "未設定")}</p><label>自己紹介<textarea name="bio">${esc(profile?.bio || "")}</textarea></label><label>アイコン色<input name="avatar_color" type="color" value="${profile?.avatar_color || "#e2793f"}"></label><button class="portal-action primary">プロフィールを保存</button></form></section></main>`; document.querySelector("#profile-form").onsubmit = async (event) => { event.preventDefault(); const f = new FormData(event.target); await supabase.from("profiles").update({ nickname: f.get("nickname"), bio: f.get("bio"), avatar_color: f.get("avatar_color") }).eq("id", user.id); location.reload(); }; }
+async function adminPage(supabase, trip, role) { if (role !== "admin") { root.innerHTML = `<main class="detail-shell">${header("admin", role)}<section class="detail-hero"><h1>管理者のみ利用できます</h1></section></main>`; return; } const { data: members } = await supabase.from("trip_members").select("user_id,role,status").eq("trip_id", trip.id); const ids = (members || []).map((m) => m.user_id); const { data: profiles } = ids.length ? await supabase.from("profiles").select("id,nickname,line_display_name").in("id", ids) : { data: [] }; const names = new Map((profiles || []).map((p) => [p.id, p.nickname || p.line_display_name || "参加者"])); root.innerHTML = `<main class="detail-shell">${header("admin", role)}<section class="detail-hero"><p class="portal-kicker">ADMINISTRATION</p><h1>参加者を管理</h1></section><section class="detail-section"><div class="admin-list">${(members || []).map((m) => `<div class="saved-row"><strong>${esc(names.get(m.user_id))}</strong><span>${m.status === "approved" ? "承認済み" : "申請中"}｜${m.role === "admin" ? "管理者" : "参加者"}</span></div>`).join("")}</div></section></main>`; }
+
+main().catch((error) => { console.error(error); root.innerHTML = `<main class="detail-shell"><section class="detail-hero"><h1>読み込みに失敗しました</h1><p>ログイン状態と通信状態を確認してください。</p></section></main>`; });
