@@ -4,19 +4,21 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import TripHeader from "@/app/components/TripHeader";
 import TripTabs from "@/app/components/TripTabs";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import PlacesManager from "../itinerary/PlacesManager";
 
 // 「準備」は持ち物とメモを1画面に統合したタブ。
 type Focus = "itinerary" | "prep";
 type Person = { id: string; display_name: string; avatar_color: string | null };
-type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; notes: string; sort_order: number; version: number };
+type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null; notes: string; sort_order: number; version: number };
 type Packing = { id: string; name: string; memo: string; is_ready: boolean; version: number };
 type Note = { id: string; title: string; body: string; version: number };
+type Place = { id: string; name: string; category: string; address: string; website_url: string; map_url: string };
 type Assignment = { itinerary_item_id: string; participant_id: string };
-type Draft = { event_date: string; event_time: string; title: string; place: string; notes: string; assigneeIds: string[] };
+type Draft = { event_date: string; event_time: string; title: string; place: string; place_id: string | null; notes: string; assigneeIds: string[] };
 
 type SaveResult = { status: "ok" | "conflict" | "forbidden" | "invalid"; id?: string; version?: number };
 
-const blank = (date: string): Draft => ({ event_date: date, event_time: "", title: "", place: "", notes: "", assigneeIds: [] });
+const blank = (date: string): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds: [] });
 const CONFLICT_MESSAGE = "他の人が先に保存しました。最新を読み込みます";
 
 export default function SharedTripPage({
@@ -26,6 +28,7 @@ export default function SharedTripPage({
   const dates = [tripDates.start, tripDates.end];
   const people = useMemo(() => new Map(participants.map((person) => [person.id, person])), [participants]);
   const [itinerary, setItinerary] = useState<Itinerary[]>([]);
+  const [places, setPlaces] = useState<Place[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [packing, setPacking] = useState<Packing[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -41,16 +44,17 @@ export default function SharedTripPage({
 
   const load = async (message = "みんなに共有済み") => {
     if (!supabase) return;
-    const [i, p, n] = await Promise.all([
-      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,notes,sort_order,version").eq("trip_id", tripId),
+    const [i, p, n, placesResult] = await Promise.all([
+      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,notes,sort_order,version").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
+      supabase.from("trip_places").select("id,name,category,address,website_url,map_url").eq("trip_id", tripId).order("name"),
     ]);
-    if (i.error || p.error || n.error) { setStatus("読み込めませんでした"); return; }
+    if (i.error || p.error || n.error || placesResult.error) { setStatus("読み込めませんでした"); return; }
     const items = [...(i.data ?? [])].sort((a, b) => `${a.event_date ?? "9999"}${a.event_time ?? "99"}`.localeCompare(`${b.event_date ?? "9999"}${b.event_time ?? "99"}`) || a.sort_order - b.sort_order);
     const a = items.length ? await supabase.from("itinerary_assignees").select("itinerary_item_id,participant_id").in("itinerary_item_id", items.map((item) => item.id)) : { data: [], error: null };
     if (a.error) { setStatus("担当者データを読み込めませんでした"); return; }
-    setItinerary(items); setPacking(p.data ?? []); setNotes(n.data ?? []); setAssignments(a.data ?? []); setStatus(message);
+    setItinerary(items); setPlaces(placesResult.data ?? []); setPacking(p.data ?? []); setNotes(n.data ?? []); setAssignments(a.data ?? []); setStatus(message);
   };
   useEffect(() => { void load(); }, [tripId]);
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
@@ -69,7 +73,7 @@ export default function SharedTripPage({
   // 旅程本体と担当者は1トランザクションで保存する。担当者だけが消える経路をなくすため。
   const saveItinerary = async (value: Draft, target: { id: string; version: number } | null) => {
     if (!supabase) return { status: "invalid" } as SaveResult;
-    const { data, error } = await supabase.rpc("save_itinerary_item", {
+    const { data, error } = await supabase.rpc("save_itinerary_item_with_place", {
       target_trip_id: tripId,
       target_item_id: target?.id ?? null,
       expected_version: target?.version ?? null,
@@ -77,6 +81,7 @@ export default function SharedTripPage({
       item_event_time: value.event_time || null,
       item_title: value.title.trim(),
       item_place: value.place.trim(),
+      item_place_id: value.place_id,
       item_notes: value.notes.trim(),
       assignee_ids: value.assigneeIds,
     });
@@ -140,7 +145,7 @@ export default function SharedTripPage({
   };
   const itineraryFields = (value: Draft, setValue: (value: Draft) => void) => <>
     <div className="itinerary-time-fields"><label>日付<select value={value.event_date} onChange={(e) => setValue({ ...value, event_date: e.target.value })}>{dates.map((date) => <option key={date}>{date}</option>)}</select></label><label>時刻<input type="time" step="300" value={value.event_time} onChange={(e) => setValue({ ...value, event_time: e.target.value })} /></label></div>
-    <label>予定名<input required value={value.title} onChange={(e) => setValue({ ...value, title: e.target.value })} /></label><label>場所<input value={value.place} onChange={(e) => setValue({ ...value, place: e.target.value })} /></label>
+    <label>予定名<input required value={value.title} onChange={(e) => setValue({ ...value, title: e.target.value })} /></label><label>行き先<select value={value.place_id ?? ""} onChange={(e) => { const place = places.find((item) => item.id === e.target.value); setValue({ ...value, place_id: e.target.value || null, place: place?.name ?? value.place }); }}><option value="">行き先を選択（任意）</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select></label><label>場所メモ<input value={value.place} onChange={(e) => setValue({ ...value, place: e.target.value })} /></label>
     <fieldset><legend>担当する人</legend><div className="participant-options">{participants.map((person) => <label key={person.id}><input type="checkbox" checked={value.assigneeIds.includes(person.id)} onChange={() => setValue({ ...value, assigneeIds: toggle(value.assigneeIds, person.id) })} />{person.display_name}</label>)}</div></fieldset>
     <label>メモ<textarea value={value.notes} onChange={(e) => setValue({ ...value, notes: e.target.value })} /></label>
   </>;
@@ -149,13 +154,14 @@ export default function SharedTripPage({
   return <main className="shared-shell"><TripHeader tripSlug={tripSlug} tripName={tripName} avatarUrl={avatarUrl} /><p className="shared-kicker">{focus === "itinerary" ? "ITINERARY" : "PREPARATION"}</p><h1>{focus === "itinerary" ? "旅程" : "準備"}</h1><p className="shared-status" role="status">{status}</p>
     {show("itinerary") && <section id="itinerary" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>ITINERARY</p><h2>旅程</h2></div><span className="saved-badge">みんなに共有済み</span></div><div className="live-position"><span className="live-pulse" />{timelineState.label}<small>現在時刻 {now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</small></div>
       <details className="add-drawer"><summary>＋ 予定を追加</summary><form className="draft-form" onSubmit={saveNewItinerary}>{itineraryFields(draft, setDraft)}<button className="save-button" disabled={saving}>この予定を保存</button></form></details>
-      <div className="timeline">{itinerary.map((item, index) => { const isCurrent = index === timelineState.currentIndex; const isNext = index === timelineState.nextIndex; return <article className={`timeline-item ${isCurrent ? "is-current" : ""} ${isNext ? "is-next" : ""}`} key={item.id}><div className="timeline-time"><strong>{item.event_time?.slice(0, 5) || "未定"}</strong><span>{item.event_date?.replaceAll("-", "/")}</span></div><div className="timeline-dot" aria-hidden="true" /><div className="timeline-card">{isCurrent && <span className="timeline-state">いまここ</span>}{isNext && <span className="timeline-state next-state">次</span>}{editItinerary?.id === item.id ? <form className="draft-form editing-panel" onSubmit={saveItineraryEdit}><span className="editing-badge">編集中</span>{itineraryFields(editItinerary, (value) => setEditItinerary({ ...editItinerary, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditItinerary(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("itinerary_items", item, item.title, () => setEditItinerary(null))}>削除</button></div></form> : <><button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, notes: item.notes, assigneeIds: selected(item.id) })}>編集</button><h3>{item.title}</h3>{item.place && <p className="timeline-place">{item.place}</p>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ background: people.get(id)?.avatar_color ?? "#e5efe7" }}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div></>}</div></article>; })}</div>{!itinerary.length && <p className="empty-state">まだ予定はありません。</p>}</section>}
+      <div className="timeline">{itinerary.map((item, index) => { const isCurrent = index === timelineState.currentIndex; const isNext = index === timelineState.nextIndex; return <article className={`timeline-item ${isCurrent ? "is-current" : ""} ${isNext ? "is-next" : ""}`} key={item.id}><div className="timeline-time"><strong>{item.event_time?.slice(0, 5) || "未定"}</strong><span>{item.event_date?.replaceAll("-", "/")}</span></div><div className="timeline-dot" aria-hidden="true" /><div className="timeline-card">{isCurrent && <span className="timeline-state">いまここ</span>}{isNext && <span className="timeline-state next-state">次</span>}{editItinerary?.id === item.id ? <form className="draft-form editing-panel" onSubmit={saveItineraryEdit}><span className="editing-badge">編集中</span>{itineraryFields(editItinerary, (value) => setEditItinerary({ ...editItinerary, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditItinerary(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("itinerary_items", item, item.title, () => setEditItinerary(null))}>削除</button></div></form> : <><button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, place_id: item.place_id, notes: item.notes, assigneeIds: selected(item.id) })}>編集</button><h3>{item.title}</h3>{item.place_id && <p className="timeline-place">{places.find((place) => place.id === item.place_id)?.name ?? item.place}</p>}{!item.place_id && item.place && <p className="timeline-place">{item.place}</p>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ background: people.get(id)?.avatar_color ?? "#e5efe7" }}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div></>}</div></article>; })}</div>{!itinerary.length && <p className="empty-state">まだ予定はありません。</p>}</section>}
     {show("packing") && <section id="packing" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>PACKING</p><h2>持ち物</h2></div><span className="saved-badge">みんなに共有済み</span></div>
       <details className="add-drawer"><summary>＋ 持ち物を追加</summary><form className="draft-form compact-form" onSubmit={(e) => savePacking(e)}><input required value={packingDraft.name} placeholder="持ち物名" onChange={(e) => setPackingDraft({ ...packingDraft, name: e.target.value })} /><input value={packingDraft.memo} placeholder="担当者・数量など" onChange={(e) => setPackingDraft({ ...packingDraft, memo: e.target.value })} /><button className="save-button" disabled={saving}>保存</button></form></details>
       {packing.map((item) => editPacking?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => savePacking(e, true)}><span className="editing-badge">編集中</span><input value={editPacking.name} onChange={(e) => setEditPacking({ ...editPacking, name: e.target.value })} /><input value={editPacking.memo} onChange={(e) => setEditPacking({ ...editPacking, memo: e.target.value })} /><label className="ready-toggle"><input type="checkbox" checked={editPacking.is_ready} onChange={(e) => setEditPacking({ ...editPacking, is_ready: e.target.checked })} />準備できた</label><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditPacking(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("packing_items", item, item.name, () => setEditPacking(null))}>削除</button></div></form> : <div className="saved-row" key={item.id}><button className="edit-button" onClick={() => setEditPacking(item)}>編集</button><span className={`packing-state ${item.is_ready ? "ready" : "todo"}`}>{item.is_ready ? "準備済み" : "未準備"}</span><strong>{item.name}</strong><span>{item.memo}</span></div>)}{!packing.length && <p className="empty-state">まだ持ち物はありません。</p>}</section>}
     {show("notes") && <section id="notes" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>NOTES</p><h2>共有メモ</h2></div><span className="saved-badge">みんなに共有済み</span></div>
       <details className="add-drawer"><summary>＋ メモを追加</summary><form className="draft-form" onSubmit={(e) => saveNote(e)}><input required value={noteDraft.title} placeholder="メモの題名" onChange={(e) => setNoteDraft({ ...noteDraft, title: e.target.value })} /><textarea value={noteDraft.body} placeholder="内容" onChange={(e) => setNoteDraft({ ...noteDraft, body: e.target.value })} /><button className="save-button" disabled={saving}>このメモを保存</button></form></details>
       {notes.map((item) => editNote?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => saveNote(e, true)}><span className="editing-badge">編集中</span><input value={editNote.title} onChange={(e) => setEditNote({ ...editNote, title: e.target.value })} /><textarea value={editNote.body} onChange={(e) => setEditNote({ ...editNote, body: e.target.value })} /><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditNote(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("shared_notes", item, item.title, () => setEditNote(null))}>削除</button></div></form> : <div className="saved-row" key={item.id}><button className="edit-button" onClick={() => setEditNote(item)}>編集</button><strong>{item.title}</strong><span>{item.body}</span></div>)}{!notes.length && <p className="empty-state">まだ共有メモはありません。</p>}</section>}
+    {focus === "itinerary" && <PlacesManager tripId={tripId} />}
     <TripTabs tripSlug={tripSlug} active={focus === "itinerary" ? "itinerary" : "prep"} />
   </main>;
 }
