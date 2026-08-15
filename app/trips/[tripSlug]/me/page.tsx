@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getSharedTripContext } from "../_shared/getSharedTripContext";
 import ProfileEditor from "./ProfileEditor";
 import BudgetBackup from "./BudgetBackup";
+import ChangeLogPanel from "./ChangeLogPanel";
 
 type ProfileData = { nickname: string; line_display_name: string; avatar_url: string | null; avatar_color: string | null; bio: string };
 
@@ -31,6 +32,7 @@ export default async function MePage({ params }: { params: Promise<{ tripSlug: s
       <Link className="admin-entry" href={`/trips/${tripSlug}/me/members`}>参加者を管理する</Link>
       <BudgetBackup tripSlug={tripSlug} />
     </section>}
+    {context.isAdmin && <ChangeLogPanel tripId={context.tripId} />}
     <TripTabs tripSlug={tripSlug} active="me" />
   </main>;
 }
