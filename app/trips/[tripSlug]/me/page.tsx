@@ -5,6 +5,7 @@ import TripTabs from "@/app/components/TripTabs";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getSharedTripContext } from "../_shared/getSharedTripContext";
 import ProfileEditor from "./ProfileEditor";
+import BudgetBackup from "./BudgetBackup";
 
 type ProfileData = { nickname: string; line_display_name: string; avatar_url: string | null; avatar_color: string | null; bio: string };
 
@@ -28,6 +29,7 @@ export default async function MePage({ params }: { params: Promise<{ tripSlug: s
       <p className="auth-eyebrow">ADMINISTRATION</p>
       <h2>管理者向け</h2>
       <Link className="admin-entry" href={`/trips/${tripSlug}/me/members`}>参加者を管理する</Link>
+      <BudgetBackup tripSlug={tripSlug} />
     </section>}
     <TripTabs tripSlug={tripSlug} active="me" />
   </main>;
