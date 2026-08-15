@@ -51,3 +51,7 @@ npm run dev
 ```
 
 The legacy budget screen still uses browser storage until the DB-backed expense editor is implemented.
+
+## GitHub Pages cache policy
+
+GitHub Pages releases must use build-versioned asset URLs. Keep `__BUILD_VERSION__` in source HTML/CSS asset URLs; `scripts/build-pages-config.mjs` replaces it with the deployment commit SHA during the Pages workflow. Do not replace the placeholder with a fixed date or manually incremented value.
