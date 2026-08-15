@@ -29,6 +29,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [purchaseDraft, setPurchaseDraft] = useState({ name: "", category: "food", planned_amount: 0, memo: "" });
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [receiptDraft, setReceiptDraft] = useState({ store_name: "", purchased_on: today(), payer_id: userId, memo: "" });
   const [items, setItems] = useState<DraftItem[]>([{ name: "", category: "food", net_amount: 0, tax_rate: 0.1 }]);
   const [status, setStatus] = useState("読み込み中…");
@@ -122,6 +123,22 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     setEditingPurchase(null);
     await load(data ? "購入品を更新しました" : "他の人が先に更新しました");
   };
+  const saveExpensePayer = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !editingExpense) return;
+    setSaving(true);
+    const { data, error } = await supabase.from("expenses").update({ payer_id: editingExpense.payer_id || null }).eq("id", editingExpense.id).eq("version", editingExpense.version).select("id").maybeSingle();
+    const receiptResult = data && !error && editingExpense.receipt_id
+      ? await supabase.from("receipts").update({ payer_id: editingExpense.payer_id || null }).eq("id", editingExpense.receipt_id)
+      : null;
+    setSaving(false);
+    setEditingExpense(null);
+    if (error || receiptResult?.error) {
+      await load(receiptResult?.error ? "費用は更新されましたが、レシートの立替人を更新できませんでした" : "立替人を更新できませんでした");
+      return;
+    }
+    await load(data ? "立替人を更新しました" : "他の人が先に更新しました");
+  };
   const submitReceipt = async (event: FormEvent) => {
     event.preventDefault(); if (!supabase || !receiptDraft.store_name.trim() || !items.some((item) => item.name.trim() && item.net_amount > 0)) return; setSaving(true);
     const inputItems = items.filter((item) => item.name.trim() && item.net_amount > 0).map((item) => { const taxAmount = Math.floor(item.net_amount * item.tax_rate); return { name: item.name.trim(), category: item.category, net_amount: item.net_amount, tax_rate: item.tax_rate, tax_amount: taxAmount, gross_amount: item.net_amount + taxAmount }; });
@@ -148,7 +165,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     <section className="panel finance-panel"><form className="finance-form" onSubmit={submitReceipt}><div className="fields"><label className="field"><span>店名</span><input required value={receiptDraft.store_name} onChange={(event) => setReceiptDraft({ ...receiptDraft, store_name: event.target.value })} /></label><label className="field"><span>購入日</span><input type="date" value={receiptDraft.purchased_on} onChange={(event) => setReceiptDraft({ ...receiptDraft, purchased_on: event.target.value })} /></label><label className="field"><span>立替えた人</span><select value={receiptDraft.payer_id} onChange={(event) => setReceiptDraft({ ...receiptDraft, payer_id: event.target.value })}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><label className="field"><span>メモ</span><input value={receiptDraft.memo} onChange={(event) => setReceiptDraft({ ...receiptDraft, memo: event.target.value })} /></label></div><div className="finance-items"><div className="finance-subheading"><h3>明細</h3><button type="button" className="text-button" onClick={addItem}>＋ 明細を追加</button></div>{items.map((item, index) => <div className="finance-item" key={index}><input required placeholder="品目" value={item.name} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /><select value={item.category} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, category: event.target.value } : current))}>{categories.map((category) => <option key={category} value={category}>{categoryLabel[category]}</option>)}</select><input required type="number" min="0" placeholder="税抜" value={item.net_amount || ""} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, net_amount: Math.max(0, Number(event.target.value) || 0) } : current))} /><select value={item.tax_rate} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, tax_rate: Number(event.target.value) } : current))}><option value="0.1">10%</option><option value="0.08">8%</option><option value="0">非課税</option></select></div>)}</div><p className="finance-note">登録時に税込額を計算し、承認済み参加者全員へ均等に負担額を作成します。</p><button className="save-button" disabled={saving}>レシートと費用を保存</button></form></section>
 
     <h2 className="budget-title">立替費用</h2>
-    <section className="panel finance-panel"><div className="finance-list">{expenses.map((expense) => <div className="finance-expense" key={expense.id}><div><strong>{expense.title}</strong><span>{categoryLabel[expense.category] ?? expense.category}｜立替え：{nameOf(expense.payer_id)}</span></div><b>{money(expense.amount)}</b><small>{expense.settlement_status === "settled" ? "精算済み" : "未精算"}</small></div>)}</div>{!expenses.length && <p className="empty-state">立替費用はまだありません。</p>}</section>
+    <section className="panel finance-panel"><div className="finance-list">{expenses.map((expense) => editingExpense?.id === expense.id ? <form className="expense-edit-form" key={expense.id} onSubmit={saveExpensePayer}><div><strong>{expense.title}</strong><span>{money(expense.amount)}｜{categoryLabel[expense.category] ?? expense.category}</span></div><label><span>立替えた人</span><select aria-label={`${expense.title}の立替えた人`} value={editingExpense.payer_id ?? ""} onChange={(event) => setEditingExpense({ ...editingExpense, payer_id: event.target.value || null })}><option value="">立替人未設定</option>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><div className="expense-edit-actions"><button className="save-button" disabled={saving}>保存</button><button type="button" className="text-button" onClick={() => setEditingExpense(null)} disabled={saving}>キャンセル</button></div></form> : <div className="finance-expense" key={expense.id}><div className="finance-expense-main"><strong>{expense.title}</strong><span>{categoryLabel[expense.category] ?? expense.category}</span><span className="expense-payer">立替えた人：{nameOf(expense.payer_id)}</span></div><b>{money(expense.amount)}</b><small>{expense.settlement_status === "settled" ? "精算済み" : "未精算"}</small><button className="text-button" onClick={() => setEditingExpense(expense)} disabled={saving}>立替人を編集</button></div>)}</div>{!expenses.length && <p className="empty-state">立替費用はまだありません。</p>}</section>
 
     <h2 className="budget-title">精算</h2>
     <section className="panel finance-panel"><p className="finance-note">立替えた金額と各人の負担額から、支払い先を自動計算しています。</p><div className="settlement-list">{suggestions.map((suggestion) => <div className="settlement-row" key={`${suggestion.from}-${suggestion.to}-${suggestion.amount}`}><span>{nameOf(suggestion.from)} → {nameOf(suggestion.to)}</span><b>{money(suggestion.amount)}</b><button className="save-button" onClick={() => void markSettlementPaid(suggestion)} disabled={saving}>支払済みにする</button></div>)}</div>{!suggestions.length && <p className="empty-state">現在、精算候補はありません。</p>}<div className="settlement-history">{settlements.filter((item) => item.status === "paid").map((settlement) => <span key={settlement.id}>{nameOf(settlement.from_user_id)} → {nameOf(settlement.to_user_id)} {money(settlement.amount)} 済</span>)}</div></section>
