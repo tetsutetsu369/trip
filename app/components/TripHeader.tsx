@@ -9,10 +9,9 @@ type TripHeaderProps = {
 const items = [
   ["portal", "ポータル", ""],
   ["itinerary", "旅程", "/itinerary"],
-  ["budget", "費用計算", "/budget"],
+  ["budget", "費用", "/budget"],
   ["packing", "持ち物", "/packing"],
   ["notes", "メモ", "/notes"],
-  ["profile", "プロフィール", "/profile"],
 ] as const;
 
 export default function TripHeader({ tripSlug, active = "portal", showAdmin = false }: TripHeaderProps) {
@@ -23,12 +22,9 @@ export default function TripHeader({ tripSlug, active = "portal", showAdmin = fa
         <span><strong>Trip Journal</strong><small>四国三郎の郷 BBQ旅</small></span>
       </Link>
       <nav className="trip-header-nav" aria-label="旅行メニュー">
-        {items.map(([key, label, suffix]) => (
-          <Link key={key} className={active === key ? "is-active" : ""} href={`/trips/${tripSlug}${suffix}`}>
-            {label}
-          </Link>
-        ))}
-        {showAdmin && <Link className={active === "admin" ? "is-active admin-link" : "admin-link"} href={`/admin/members?trip=${tripSlug}`}>管理者</Link>}
+        {items.map(([key, label, suffix]) => <Link key={key} className={active === key ? "is-active" : ""} href={`/trips/${tripSlug}${suffix}`}>{label}</Link>)}
+        {showAdmin && <Link className={active === "admin" ? "is-active admin-link" : "admin-link"} href={`/admin/members?trip=${tripSlug}`}>管理</Link>}
+        <Link className="trip-header-user" href={`/trips/${tripSlug}/profile`} aria-label="プロフィールを編集" title="プロフィールを編集"><span aria-hidden="true">👤</span></Link>
       </nav>
     </header>
   );
