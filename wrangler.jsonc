@@ -12,6 +12,9 @@
   "main": "dist/server/index.js",
   "compatibility_date": "2025-09-01",
 
+  // workers.dev のサブドメインへ配信することを明示する。
+  "workers_dev": true,
+
   "assets": {
     "directory": "dist/client",
     "binding": "ASSETS"
