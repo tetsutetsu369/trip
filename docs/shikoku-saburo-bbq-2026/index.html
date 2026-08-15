@@ -13,7 +13,7 @@
   <section class="panel rental"><h3>キャンプ用品レンタル <span class="tag day">当日</span></h3><p class="note">必要なものにチェックして数量を入力。</p><div class="table-wrap"><table class="cost-table"><thead><tr><th>利用</th><th>用品</th><th class="num">単価</th><th class="num">数量</th><th class="num">小計</th><th class="num">1人当たり</th></tr></thead><tbody id="rentals"></tbody></table></div><div id="rentalTotal"></div></section>
   <h2 class="section">最終集計</h2><section class="panel" id="final"></section>
   <p class="source">施設・レンタル料金は <a href="https://www.mimacamp.jp/price.php" target="_blank" rel="noreferrer">四国三郎の郷 公式料金案内</a>を参考に設定。データはこの端末のブラウザ内に保存されます。</p>
-</main><script>
+</main><script src="../app-config.js"></script><script type="module">import { createClient } from "https://esm.sh/@supabase/supabase-js@2";const config=window.TRIP_CONFIG;if(config){const supabase=createClient(config.supabaseUrl,config.supabaseAnonKey);const{data:{user}}=await supabase.auth.getUser();if(user){const{data:profile}=await supabase.from("profiles").select("avatar_url").eq("id",user.id).maybeSingle();if(profile?.avatar_url){const icon=document.querySelector(".trip-header-user");icon.innerHTML=`<img src="${profile.avatar_url.replaceAll("&","&amp;").replaceAll('"',"&quot;")}" alt="" referrerpolicy="no-referrer">`;}}}}</script><script>
 const KEY='trip:shikoku-saburo-bbq-2026:budget:v1';
 const rentalDefs=[['テント',1560],['タープ',510],['キャンプテーブル',510],['キャンプチェア',200],['バーベキューコンロ',410],['ガス式コンロ',410],['キャンプライト',100],['炊事用具',620],['毛布',200],['電気延長コード',100]];
 const routeNames=['フジグラン丸亀 → 四国三郎の郷','四国三郎の郷 → フォレストアドベンチャー祖谷','祖谷 → 高知駅','高知駅 → ひろめ市場','ひろめ市場 → 府中IC'];
