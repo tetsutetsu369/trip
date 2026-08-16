@@ -52,7 +52,10 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
   const start = Date.parse(`${site.startDate}T00:00:00+09:00`);
   const daysUntil = Math.max(0, Math.ceil((start - Date.now()) / 86_400_000));
   const next = preview.itinerary.find((item) => item.event_date && item.event_date >= new Date().toISOString().slice(0, 10)) ?? preview.itinerary[0] ?? null;
-  const nextPlace = next?.place_id ? preview.places.find((place) => place.id === next.place_id) : null;
+  const nextPlace = next
+    ? preview.places.find((place) => place.id === next.place_id)
+      ?? preview.places.find((place) => place.name.trim() === next.place.trim())
+    : null;
   const planned = preview.purchases.reduce((sum, item) => sum + item.planned_amount, 0);
   const purchased = preview.purchases.reduce((sum, item) => sum + (item.is_purchased ? item.purchased_amount : 0), 0);
   const expenses = preview.expenses.reduce((sum, item) => sum + item.amount, 0);
@@ -60,7 +63,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
   return <main className={`trip-portal-shell ${site.theme.heroClassName}`} style={{ "--trip-accent": site.theme.accent, "--trip-accent-dark": site.theme.accentDark, "--trip-surface": site.theme.surface, "--trip-background": site.theme.background } as CSSProperties}>
     <TripHeader tripSlug={tripSlug} tripName={site.title} avatarUrl={avatarUrl} />
     <section className="trip-portal-hero"><p className="trip-portal-eyebrow">Trip Journal</p><div className="trip-hero-title-row"><h1>{site.title}</h1></div><p className="trip-portal-description">{site.description}</p><div className="trip-portal-meta"><span>{site.dateLabel}</span><span>{site.locationLabel}</span></div></section>
-    <section className="home-highlight-grid" aria-label="旅の概要"><article className="home-countdown-card"><span>出発まで</span><strong>{daysUntil}</strong><small>日</small><p>{site.dateLabel}</p></article><article className="home-next-card"><span>次の行き先</span>{next ? <><h2>{nextPlace?.name ?? next.place ?? "場所未設定"}</h2><p>{next.event_date?.replaceAll("-", "/")} {next.event_time?.slice(0, 5) || "時間未定"}｜{next.title}</p>{nextPlace?.map_url && <a href={nextPlace.map_url} target="_blank" rel="noreferrer">地図を開く</a>}</> : <p>旅程を追加すると、次の行き先がここに表示されます。</p>}</article></section>
+    <section className="home-highlight-grid" aria-label="旅の概要"><article className="home-countdown-card"><span>出発まで</span><strong>{daysUntil}</strong><small>日</small><p>{site.dateLabel}</p></article><article className="home-next-card"><span>次の行き先</span>{next ? <><h2>{nextPlace?.name ?? next.place ?? "場所未設定"}</h2><p>{next.event_date?.replaceAll("-", "/")} {next.event_time?.slice(0, 5) || "時間未定"}｜{next.title}</p>{nextPlace?.map_url.trim() && <a href={nextPlace.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}</> : <p>旅程を追加すると、次の行き先がここに表示されます。</p>}</article></section>
     <section className="trip-portal-section" aria-labelledby="trip-overview"><div className="trip-section-heading"><div><p>TRIP OVERVIEW</p><h2 id="trip-overview">旅の見開き</h2></div><span>SHARED SPACE</span></div><div className="portal-preview-grid">
       <PreviewCard href={`/trips/${site.slug}/itinerary`} title="旅程" meta="TIMELINE">{preview.itinerary.length ? <div className="portal-mini-timeline">{preview.itinerary.slice(0, 3).map((item, index) => <div key={`${item.title}-${index}`}><b>{item.event_time?.slice(0, 5) || "未定"}</b><span>{item.title}</span><small>{nextPlace?.name ?? item.place}</small></div>)}</div> : <p>まだ予定はありません</p>}</PreviewCard>
       <PreviewCard href={`/trips/${site.slug}/budget`} title="費用と精算" meta="COST"><strong className="portal-big-number">{expenses.toLocaleString("ja-JP")}円</strong><p>購入済み {purchased.toLocaleString("ja-JP")} / 予定 {planned.toLocaleString("ja-JP")}円</p><small>レシートと立替を管理</small></PreviewCard>
