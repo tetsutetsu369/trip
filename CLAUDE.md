@@ -5,8 +5,10 @@
 - 本番URL: https://tetsu-trip-portal.tetsutetsu369.workers.dev/trips/shikoku-saburo-bbq-2026
 - ホスティング: Cloudflare Workers（workers.dev）
 - 本番Origin: https://tetsu-trip-portal.tetsutetsu369.workers.dev
+- デプロイ先: 上記のCloudflare Workers本番Origin
 
 上記のWorkers URLを本番環境の正規URLとして扱う。
+公開・デプロイ時は、別のSites公開URLではなく、必ず上記のWorkers URLへ反映する。
 
 ## Supabase接続情報
 
