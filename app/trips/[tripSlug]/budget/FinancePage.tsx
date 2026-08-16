@@ -12,6 +12,7 @@ type Receipt = { id: string; store_name: string; purchased_on: string | null; pa
 type Expense = { id: string; receipt_id: string | null; title: string; category: string; amount: number; payer_id: string | null; payment_status: string; settlement_status: string; memo: string; version: number };
 type Share = { expense_id: string; user_id: string; amount: number };
 type Settlement = { id: string; from_user_id: string; to_user_id: string; amount: number; status: string };
+type TravelPlan = { travel_estimated_cost: number };
 type DraftItem = { name: string; category: string; net_amount: number; tax_rate: number };
 
 const money = (value: number) => new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0);
@@ -36,6 +37,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [shares, setShares] = useState<Share[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [travelPlans, setTravelPlans] = useState<TravelPlan[]>([]);
   const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>({});
   const [budgetPerPerson, setBudgetPerPerson] = useState(0);
   const [budgetDraft, setBudgetDraft] = useState(0);
@@ -53,7 +55,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const nameOf = (id: string | null) => people.find((person) => person.id === id)?.name ?? "未設定";
   const load = async (message = "みんなに共有済み") => {
     if (!supabase) { setStatus("Supabase未接続"); return; }
-    const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult] = await Promise.all([
+    const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult, travelResult] = await Promise.all([
       supabase.from("trip_settings").select("budget,version").eq("trip_id", tripId).maybeSingle<TripSettings>(),
       supabase.from("purchases").select("id,name,category,planned_amount,purchased_amount,is_purchased,memo,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("receipts").select("id,store_name,purchased_on,payer_id,memo,version").eq("trip_id", tripId).order("purchased_on", { ascending: false }),
@@ -62,8 +64,9 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
       supabase.from("expense_shares").select("expense_id,user_id,amount"),
       supabase.from("settlements").select("id,from_user_id,to_user_id,amount,status").eq("trip_id", tripId).order("created_at", { ascending: false }),
       supabase.from("trip_members").select("user_id").eq("trip_id", tripId).eq("status", "approved"),
+      supabase.from("itinerary_items").select("travel_estimated_cost").eq("trip_id", tripId),
     ]);
-    if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error) { setStatus("費用データを読み込めませんでした"); return; }
+    if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error || travelResult.error) { setStatus("費用データを読み込めませんでした"); return; }
     const savedBudget = budgetSettingsOf(settingsResult.data?.budget);
     const savedBudgetPerPerson = storedBudgetPerPerson(savedBudget);
     setBudgetSettings(savedBudget);
@@ -82,6 +85,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     setExpenses(expenseResult.data ?? []);
     setShares(shareResult.data ?? []);
     setSettlements(settlementResult.data ?? []);
+    setTravelPlans(travelResult.data ?? []);
     setStatus(message);
   };
   useEffect(() => { void load(); }, [tripId]);
@@ -90,7 +94,8 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     planned: purchases.reduce((sum, purchase) => sum + purchase.planned_amount, 0),
     purchased: purchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0),
     expenses: expenses.reduce((sum, expense) => sum + expense.amount, 0),
-  }), [purchases, expenses]);
+    travel: travelPlans.reduce((sum, item) => sum + item.travel_estimated_cost, 0),
+  }), [purchases, expenses, travelPlans]);
   const budgetTotals = useMemo(() => {
     const participantCount = Math.max(1, people.length);
     const variablePurchases = purchases.filter(isVariablePurchase);
@@ -227,7 +232,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
 
   return <main className="budget-shell finance-shell"><TripHeader tripSlug={tripSlug} tripName={tripName} avatarUrl={avatarUrl} /><p className="save-status" role="status">{status}</p>
     <section className="budget-hero"><p className="kicker">COST & SETTLEMENT</p><h1>費用と精算</h1><p>{tripName}</p></section>
-    <section className="summary-grid finance-summary"><Summary label="購入予定" value={totals.planned} /><Summary label="購入済み" value={totals.purchased} tone="paid" /><Summary label="立替費用" value={totals.expenses} /><Summary label="精算候補" value={suggestions.reduce((sum, item) => sum + item.amount, 0)} tone="due" /></section>
+    <section className="summary-grid finance-summary"><Summary label="購入予定" value={totals.planned} /><Summary label="移動予定" value={totals.travel} /><Summary label="予定総額" value={totals.planned + totals.travel} /><Summary label="購入済み" value={totals.purchased} tone="paid" /><Summary label="立替費用" value={totals.expenses} /><Summary label="精算候補" value={suggestions.reduce((sum, item) => sum + item.amount, 0)} tone="due" /></section>
     <h2 className="budget-title">食費・雑費の予算</h2>
     <section className="panel budget-planner">
       <div className="budget-planner-heading">
@@ -247,8 +252,8 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
         <BudgetMetric label={budgetTotals.remaining < 0 ? "予算オーバー" : "配分できる残り"} value={money(Math.abs(budgetTotals.remaining))} tone={budgetTotals.remaining < 0 ? "over" : "remaining"} />
       </div>
       <div className="budget-fixed-costs">
-        <span>支払済み固定費（この予算枠の対象外）</span>
-        <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b></div>
+        <span>予算枠とは別に管理する費用</span>
+        <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b><span>移動予定</span><b>{money(totals.travel)}</b></div>
       </div>
       <p className="budget-planner-note">承認済み参加者 {budgetTotals.participantCount}人 × 1人当たり予算で計算。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。</p>
     </section>

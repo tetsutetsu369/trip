@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, type CSSProperties, useEffect, useMemo, useState } from "react";
+import { Fragment, FormEvent, type CSSProperties, useEffect, useMemo, useState } from "react";
 import TripHeader from "@/app/components/TripHeader";
 import TripTabs from "@/app/components/TripTabs";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -9,19 +9,26 @@ import PlacesManager from "../itinerary/PlacesManager";
 // 「準備」は持ち物とメモを1画面に統合したタブ。
 type Focus = "itinerary" | "prep";
 type Person = { id: string; display_name: string; avatar_color: string | null };
-type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null; group_label: string; notes: string; sort_order: number; version: number };
+type TravelValues = { travel_minutes: number; travel_distance_km: number; travel_mode: string; travel_uses_toll_road: boolean; travel_estimated_cost: number; travel_notes: string };
+type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null; group_label: string; notes: string; sort_order: number; version: number } & TravelValues;
 type Packing = { id: string; name: string; memo: string; is_ready: boolean; version: number };
 type Note = { id: string; title: string; body: string; version: number };
 type Place = { id: string; name: string; map_url: string };
 type Assignment = { itinerary_item_id: string; participant_id: string };
-type Draft = { event_date: string; event_time: string; title: string; place: string; place_id: string | null; notes: string; assigneeIds: string[] };
+type Draft = { event_date: string; event_time: string; title: string; place: string; place_id: string | null; notes: string; assigneeIds: string[] } & TravelValues;
 
 type SaveResult = { status: "ok" | "conflict" | "forbidden" | "invalid"; id?: string; version?: number };
 
 const DEFAULT_GROUP_LABEL = "全員";
 const normalizeGroupLabel = (label: string | null | undefined) => label?.trim() || DEFAULT_GROUP_LABEL;
-const blank = (date: string, assigneeIds: string[] = []): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds });
+const blank = (date: string, assigneeIds: string[] = []): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds, travel_minutes: 0, travel_distance_km: 0, travel_mode: "car", travel_uses_toll_road: false, travel_estimated_cost: 0, travel_notes: "" });
 const CONFLICT_MESSAGE = "他の人が先に保存しました。最新を読み込みます";
+const travelModeLabels: Record<string, string> = { car: "車", train: "電車", bus: "バス", taxi: "タクシー", walk: "徒歩", bicycle: "自転車", other: "その他" };
+const emptyTravel = (item: Itinerary): TravelValues => ({ travel_minutes: item.travel_minutes, travel_distance_km: item.travel_distance_km, travel_mode: item.travel_mode, travel_uses_toll_road: item.travel_uses_toll_road, travel_estimated_cost: item.travel_estimated_cost, travel_notes: item.travel_notes });
+const hasTravelPlan = (value: TravelValues) => value.travel_minutes > 0 || value.travel_distance_km > 0 || value.travel_estimated_cost > 0 || value.travel_uses_toll_road || Boolean(value.travel_notes.trim());
+const durationLabel = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}時間${minutes % 60 ? ` ${minutes % 60}分` : ""}` : `${minutes}分`;
+const distanceLabel = (distance: number) => `${Number(distance).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}km`;
+const moneyLabel = (amount: number) => `${amount.toLocaleString("ja-JP")}円`;
 const hasAllParticipants = (ids: string[], participantIds: string[]) => participantIds.length > 0 && participantIds.every((id) => ids.includes(id));
 const participantGroupKey = (ids: string[], participantIds: string[]) => {
   const knownIds = participantIds.filter((id) => ids.includes(id));
@@ -52,6 +59,7 @@ export default function SharedTripPage({
   const [packingDraft, setPackingDraft] = useState({ name: "", memo: "" });
   const [noteDraft, setNoteDraft] = useState({ title: "", body: "" });
   const [editItinerary, setEditItinerary] = useState<(Draft & { id: string; version: number }) | null>(null);
+  const [editTravel, setEditTravel] = useState<(TravelValues & { id: string; version: number }) | null>(null);
   const [editPacking, setEditPacking] = useState<Packing | null>(null);
   const [editNote, setEditNote] = useState<Note | null>(null);
   const [saving, setSaving] = useState(false);
@@ -63,7 +71,7 @@ export default function SharedTripPage({
   const load = async (message = "") => {
     if (!supabase) return;
     const [i, p, n, placesResult] = await Promise.all([
-      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version").eq("trip_id", tripId),
+      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version,travel_minutes,travel_distance_km,travel_mode,travel_uses_toll_road,travel_estimated_cost,travel_notes").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
       supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name"),
@@ -124,6 +132,7 @@ export default function SharedTripPage({
     const currentIndex = past.length ? itinerary.findIndex((item) => eventAt(item) === past[past.length - 1]) : -1;
     return { currentIndex, nextIndex, label: currentIndex >= 0 ? `いま：${itinerary[currentIndex]?.title}` : nextIndex >= 0 ? `次の予定：${itinerary[nextIndex]?.title}` : "予定を追加すると、現在地がここに表示されます" };
   }, [itinerary, now, tripDates.start]);
+  const travelSummary = useMemo(() => itinerary.reduce((summary, item) => ({ minutes: summary.minutes + item.travel_minutes, distance: summary.distance + Number(item.travel_distance_km || 0), cost: summary.cost + item.travel_estimated_cost }), { minutes: 0, distance: 0, cost: 0 }), [itinerary]);
 
   // 旅程本体と担当者は1トランザクションで保存する。担当者だけが消える経路をなくすため。
   const saveItinerary = async (value: Draft, target: { id: string; version: number } | null) => {
@@ -139,6 +148,12 @@ export default function SharedTripPage({
       item_place_id: value.place_id,
       item_group_label: participantGroupLabel(value.assigneeIds, participantIds, people),
       item_notes: value.notes.trim(),
+      item_travel_minutes: Math.max(0, Math.floor(value.travel_minutes || 0)),
+      item_travel_distance_km: Math.max(0, Number(value.travel_distance_km || 0)),
+      item_travel_mode: value.travel_mode,
+      item_travel_uses_toll_road: value.travel_uses_toll_road,
+      item_travel_estimated_cost: Math.max(0, Math.floor(value.travel_estimated_cost || 0)),
+      item_travel_notes: value.travel_notes.trim(),
       assignee_ids: value.assigneeIds,
     });
     if (error || !data) return { status: "invalid" } as SaveResult;
@@ -157,6 +172,25 @@ export default function SharedTripPage({
     if (result.status === "ok") { setEditItinerary(null); await load(); }
     else if (result.status === "conflict") { setEditItinerary(null); await load(CONFLICT_MESSAGE); }
     else setStatus("旅程を更新できませんでした");
+    setSaving(false);
+  };
+  const saveTravel = async (event: FormEvent) => {
+    event.preventDefault(); if (!supabase || !editTravel) return; setSaving(true);
+    const item = itinerary.find((candidate) => candidate.id === editTravel.id);
+    if (!item) { setEditTravel(null); setSaving(false); return; }
+    const result = await saveItinerary({
+      event_date: item.event_date ?? tripDates.start,
+      event_time: item.event_time?.slice(0, 5) ?? "",
+      title: item.title,
+      place: item.place,
+      place_id: item.place_id,
+      notes: item.notes,
+      assigneeIds: selected(item.id),
+      ...editTravel,
+    }, { id: editTravel.id, version: editTravel.version });
+    if (result.status === "ok") { setEditTravel(null); await load("移動計画を保存しました"); }
+    else if (result.status === "conflict") { setEditTravel(null); await load(CONFLICT_MESSAGE); }
+    else setStatus("移動計画を保存できませんでした");
     setSaving(false);
   };
   // 更新は該当0件でもエラーにならないため、返ってきた行の有無で競合を判定する。
@@ -215,6 +249,16 @@ export default function SharedTripPage({
     <fieldset className="itinerary-group-field"><legend>行動グループ（担当者）</legend><p className="field-hint">同じ人の組み合わせを選んだ予定は、同じグループにまとまります。</p><div className="participant-options"><label className="participant-option-all"><input type="checkbox" checked={hasAllParticipants(value.assigneeIds, participantIds)} onChange={(e) => setValue({ ...value, assigneeIds: e.target.checked ? participantIds : [] })} />全員</label>{participants.map((person) => <label key={person.id}><input type="checkbox" checked={value.assigneeIds.includes(person.id)} onChange={() => setValue({ ...value, assigneeIds: toggle(value.assigneeIds, person.id) })} />{person.display_name}</label>)}</div></fieldset>
     <label>メモ<textarea value={value.notes} onChange={(e) => setValue({ ...value, notes: e.target.value })} /></label>
   </>;
+  const travelFields = (value: TravelValues, setValue: (value: TravelValues) => void) => <div className="travel-fields">
+    <div className="travel-field-grid">
+      <label>所要時間（分）<input type="number" min="0" step="5" value={value.travel_minutes || ""} placeholder="例：45" onChange={(e) => setValue({ ...value, travel_minutes: Math.max(0, Number(e.target.value) || 0) })} /></label>
+      <label>距離（km）<input type="number" min="0" step="0.1" value={value.travel_distance_km || ""} placeholder="例：32.5" onChange={(e) => setValue({ ...value, travel_distance_km: Math.max(0, Number(e.target.value) || 0) })} /></label>
+      <label>交通手段<select value={value.travel_mode} onChange={(e) => setValue({ ...value, travel_mode: e.target.value })}>{Object.entries(travelModeLabels).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}</select></label>
+      <label>想定費用（円）<input type="number" min="0" step="100" value={value.travel_estimated_cost || ""} placeholder="例：1200" onChange={(e) => setValue({ ...value, travel_estimated_cost: Math.max(0, Number(e.target.value) || 0) })} /></label>
+    </div>
+    <label className="travel-toll-toggle"><input type="checkbox" checked={value.travel_uses_toll_road} onChange={(e) => setValue({ ...value, travel_uses_toll_road: e.target.checked })} />高速・有料道路を使う</label>
+    <label>移動メモ<input value={value.travel_notes} placeholder="例：渋滞を見込んで早めに出発" onChange={(e) => setValue({ ...value, travel_notes: e.target.value })} /></label>
+  </div>;
   const renderItineraryItem = (item: Itinerary, compact = false) => {
     const isCurrent = item.id === itinerary[timelineState.currentIndex]?.id;
     const isNext = item.id === itinerary[timelineState.nextIndex]?.id;
@@ -224,28 +268,46 @@ export default function SharedTripPage({
       <div className="timeline-time"><strong>{item.event_time?.slice(0, 5) || "未定"}</strong><span>{item.event_date?.replaceAll("-", "/")}</span></div><div className="timeline-dot" aria-hidden="true" />
       <div className="timeline-card">{isCurrent && <span className="timeline-state">いまここ</span>}{isNext && <span className="timeline-state next-state">次</span>}
         {editItinerary?.id === item.id ? <form className="draft-form editing-panel" onSubmit={saveItineraryEdit}><span className="editing-badge">編集中</span>{itineraryFields(editItinerary, (value) => setEditItinerary({ ...editItinerary, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditItinerary(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("itinerary_items", item, item.title, () => setEditItinerary(null))}>削除</button></div></form> : <>
-          <button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, place_id: item.place_id, notes: item.notes, assigneeIds: selected(item.id) })}>編集</button>
+          <button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, place_id: item.place_id, notes: item.notes, assigneeIds: selected(item.id), ...emptyTravel(item) })}>編集</button>
 
           <h3>{item.title}</h3>{place && <p className="timeline-place">{place.name}</p>}{!place && item.place && <p className="timeline-place">{item.place}</p>}{place?.map_url && <a className="timeline-map-link" href={place.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ "--assignee-color": people.get(id)?.avatar_color ?? "#55a99f" } as CSSProperties}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div>
         </>}
       </div>
     </article>;
   };
+  const renderTravelSegment = (from: Itinerary, to: Itinerary, compact = false) => {
+    const travel = emptyTravel(to);
+    const editing = editTravel?.id === to.id;
+    const fromLocation = locationForItem(from) || from.title;
+    const toLocation = locationForItem(to) || to.title;
+    return <div className={`timeline-travel ${compact ? "timeline-travel-compact" : ""}`} key={`travel-${from.id}-${to.id}`}>
+      <div className="timeline-travel-spacer" aria-hidden="true" /><div className="timeline-travel-rail" aria-hidden="true" />
+      <div className="timeline-travel-card">
+        {editing ? <form className="travel-form" onSubmit={saveTravel}><div className="travel-form-heading"><strong>{fromLocation} → {toLocation}</strong><span>移動計画を編集</span></div>{travelFields(editTravel, (value) => setEditTravel({ ...editTravel, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>移動を保存</button><button type="button" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div></form> : <>
+          <div className="timeline-travel-heading"><div><span className="timeline-travel-kicker">移動区間</span><strong>{fromLocation} → {toLocation}</strong></div><button className="text-button" onClick={() => setEditTravel({ id: to.id, version: to.version, ...travel })}>{hasTravelPlan(travel) ? "編集" : "計画する"}</button></div>
+          {hasTravelPlan(travel) ? <div className="timeline-travel-metrics"><span>{travelModeLabels[travel.travel_mode] ?? travel.travel_mode}</span>{travel.travel_minutes > 0 && <span>{durationLabel(travel.travel_minutes)}</span>}{travel.travel_distance_km > 0 && <span>{distanceLabel(travel.travel_distance_km)}</span>}{travel.travel_uses_toll_road && <span className="toll-badge">高速・有料</span>}{travel.travel_estimated_cost > 0 && <b>{moneyLabel(travel.travel_estimated_cost)}</b>}</div> : <p className="timeline-travel-empty">所要時間・距離・費用を登録できます。</p>}
+          {travel.travel_notes && <p className="timeline-travel-note">{travel.travel_notes}</p>}
+        </>}
+      </div>
+    </div>;
+  };
+  const renderTimeline = (items: Itinerary[], compact = false, showTravel = true) => <>{items.map((item, index) => <Fragment key={item.id}>{renderItineraryItem(item, compact)}{showTravel && index < items.length - 1 && renderTravelSegment(item, items[index + 1], compact)}</Fragment>)}</>;
   const renderGroupedItinerary = () => {
     const visibleGroups = itineraryGroups.filter((group) => selectedGroupKey === "all" || group.key === selectedGroupKey);
     return <div className="itinerary-group-list">{visibleGroups.map((group) => {
       const items = itinerary.filter((item) => itemGroup(item).key === group.key);
       const routeUrl = routeUrlForItems(items);
-      return <section className="itinerary-group-lane" key={group.key}><div className="itinerary-group-heading"><div><span className={`itinerary-group-badge ${group.label === DEFAULT_GROUP_LABEL ? "is-common" : ""}`}>{group.label}</span><strong>{group.label === DEFAULT_GROUP_LABEL ? "全員の予定" : `${group.label}の予定`}</strong></div><div className="itinerary-group-actions"><small>{items.length}件</small>{routeUrl && <a href={routeUrl} target="_blank" rel="noreferrer">ルートを開く</a>}</div></div><div className="timeline timeline-group-lane-items">{items.map((item) => renderItineraryItem(item, true))}</div></section>;
+      return <section className="itinerary-group-lane" key={group.key}><div className="itinerary-group-heading"><div><span className={`itinerary-group-badge ${group.label === DEFAULT_GROUP_LABEL ? "is-common" : ""}`}>{group.label}</span><strong>{group.label === DEFAULT_GROUP_LABEL ? "全員の予定" : `${group.label}の予定`}</strong></div><div className="itinerary-group-actions"><small>{items.length}件</small>{routeUrl && <a href={routeUrl} target="_blank" rel="noreferrer">ルートを開く</a>}</div></div><div className="timeline timeline-group-lane-items">{renderTimeline(items, true, false)}</div></section>;
     })}</div>;
   };
   const show = (section: "itinerary" | "packing" | "notes") => focus === "itinerary" ? section === "itinerary" : section !== "itinerary";
 
   return <main className="shared-shell"><TripHeader tripSlug={tripSlug} tripName={tripName} avatarUrl={avatarUrl} /><p className="shared-kicker">{focus === "itinerary" ? "ITINERARY" : "PREPARATION"}</p><h1>{focus === "itinerary" ? "旅程" : "準備"}</h1>{status && <p className="shared-status" role="status">{status}</p>}
-    {show("itinerary") && <section id="itinerary" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>ITINERARY</p><h2>旅程</h2></div></div><div className="live-position"><span className="live-pulse" />{timelineState.label}<small>現在時刻 {now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</small></div>
+    {show("itinerary") && <section id="itinerary" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>ITINERARY</p><h2>旅程</h2></div></div><div className="live-position"><span className="live-pulse" />{timelineState.label}<small>現在時刻 {now.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</small></div>{travelSummary.minutes > 0 || travelSummary.distance > 0 || travelSummary.cost > 0 ? <div className="itinerary-travel-summary" aria-label="移動計画の合計"><div><span>移動時間</span><strong>{durationLabel(travelSummary.minutes)}</strong></div><div><span>距離</span><strong>{distanceLabel(travelSummary.distance)}</strong></div><div><span>移動予定費</span><strong>{moneyLabel(travelSummary.cost)}</strong></div></div> : null}
       <details className="add-drawer"><summary>＋ 予定を追加</summary><form className="draft-form" onSubmit={saveNewItinerary}>{itineraryFields(draft, setDraft)}<button className="save-button" disabled={saving}>この予定を保存</button></form></details>
       <div className="itinerary-view-toolbar"><div className="itinerary-view-controls" role="tablist" aria-label="旅程の表示方法"><button type="button" role="tab" aria-selected={itineraryView === "timeline"} className={itineraryView === "timeline" ? "is-active" : ""} onClick={() => setItineraryView("timeline")}>全体表示</button><button type="button" role="tab" aria-selected={itineraryView === "groups"} className={itineraryView === "groups" ? "is-active" : ""} onClick={() => setItineraryView("groups")}>班別表示</button></div>{itineraryView === "groups" && <label className="itinerary-group-filter">表示するグループ<select value={selectedGroupKey} onChange={(e) => setSelectedGroupKey(e.target.value)}><option value="all">すべてのグループ</option>{itineraryGroups.map((group) => <option key={group.key} value={group.key}>{group.label}（{group.count}件）</option>)}</select></label>}</div>
-      {itineraryView === "timeline" ? <div className="timeline">{itinerary.map((item) => renderItineraryItem(item))}</div> : renderGroupedItinerary()}{!itinerary.length && <p className="empty-state">まだ予定はありません。</p>}</section>}
+      {itinerary.length > 1 && <p className="itinerary-travel-hint">予定の間にある「移動区間」から、所要時間・距離・高速利用・想定費用を登録できます。</p>}
+      {itineraryView === "timeline" ? <div className="timeline">{renderTimeline(itinerary)}</div> : renderGroupedItinerary()}{!itinerary.length && <p className="empty-state">まだ予定はありません。</p>}</section>}
     {show("packing") && <section id="packing" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>PACKING</p><h2>持ち物</h2></div></div>
       <details className="add-drawer"><summary>＋ 持ち物を追加</summary><form className="draft-form compact-form" onSubmit={(e) => savePacking(e)}><input required value={packingDraft.name} placeholder="持ち物名" onChange={(e) => setPackingDraft({ ...packingDraft, name: e.target.value })} /><input value={packingDraft.memo} placeholder="担当者・数量など" onChange={(e) => setPackingDraft({ ...packingDraft, memo: e.target.value })} /><button className="save-button" disabled={saving}>保存</button></form></details>
       {packing.map((item) => editPacking?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => savePacking(e, true)}><span className="editing-badge">編集中</span><input value={editPacking.name} onChange={(e) => setEditPacking({ ...editPacking, name: e.target.value })} /><input value={editPacking.memo} onChange={(e) => setEditPacking({ ...editPacking, memo: e.target.value })} /><label className="ready-toggle"><input type="checkbox" checked={editPacking.is_ready} onChange={(e) => setEditPacking({ ...editPacking, is_ready: e.target.checked })} />準備できた</label><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditPacking(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("packing_items", item, item.name, () => setEditPacking(null))}>削除</button></div></form> : <div className="saved-row packing-row" key={item.id}><label className="packing-check"><input type="checkbox" checked={item.is_ready} onChange={() => void togglePacking(item)} disabled={saving} /><span className={`packing-state ${item.is_ready ? "ready" : "todo"}`}>{item.is_ready ? "準備済み" : "未準備"}</span></label><div className="packing-copy"><strong>{item.name}</strong>{item.memo && <span>{item.memo}</span>}</div><button className="edit-button" onClick={() => setEditPacking(item)}>編集</button></div>)}{!packing.length && <p className="empty-state">まだ持ち物はありません。</p>}</section>}
