@@ -31,6 +31,13 @@
 .participant-options label{min-width:0;white-space:nowrap}
 .inline-actions{flex-wrap:wrap}
 .inline-actions .save-button{width:auto;justify-self:auto}
+.field-hint{margin:-2px 0 8px;color:var(--muted);font-size:.68rem;line-height:1.6}
+.itinerary-group-field{display:grid;gap:0}
+.participant-option-all{border-color:#e2793f66!important;background:#e2793f1c!important;color:var(--ink)!important}
+.itinerary-view-toolbar{display:grid;gap:8px;margin:0 0 16px}
+.itinerary-view-toolbar .itinerary-view-controls{margin:0}
+.itinerary-group-filter{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.7rem}
+.itinerary-group-filter select{min-width:0;flex:1;padding:8px 9px;border:1px solid var(--line);border-radius:8px;background:#fffdf9;color:var(--ink);font:inherit}
 .participant-link-list>div{min-width:0}
 .participant-row-main{min-width:0;flex:1 1 auto}
 .participant-row-main strong,.participant-row-main small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -44,6 +51,7 @@
   .inline-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .inline-actions .save-button{grid-column:1/-1;width:100%}
   .inline-actions .delete-action{margin-left:0}
+  .itinerary-group-filter{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px}
   .participant-link-list>div{align-items:stretch}
   .participant-row-main{width:100%}
   .participant-actions{width:100%;justify-content:flex-start}
