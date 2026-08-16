@@ -54,9 +54,6 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [travelPlans, setTravelPlans] = useState<TravelPlan[]>([]);
   const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>({});
-  const [budgetPerPerson, setBudgetPerPerson] = useState(0);
-  const [budgetDraft, setBudgetDraft] = useState(0);
-  const [budgetCountDraft, setBudgetCountDraft] = useState(1);
   const [fuelPriceDraft, setFuelPriceDraft] = useState(175);
   const [fuelEfficiencyDraft, setFuelEfficiencyDraft] = useState(18);
   const [tollCostDraft, setTollCostDraft] = useState(0);
@@ -89,10 +86,13 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     ]);
     if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error || travelResult.error || budgetPeopleResult.error) { setStatus("費用データを読み込めませんでした"); return; }
     const savedBudget = budgetSettingsOf(settingsResult.data?.budget);
-    const savedBudgetPerPerson = storedBudgetPerPerson(savedBudget);
     const savedBudgetPeople: BudgetPerson[] = (budgetPeopleResult.data ?? []).map((person) => ({ id: person.id, name: person.display_name, profile_id: person.profile_id }));
     const savedParticipantIds = Array.isArray(savedBudget.budgetParticipantIds) ? savedBudget.budgetParticipantIds.filter((id): id is string => typeof id === "string" && savedBudgetPeople.some((person) => person.id === id)) : savedBudgetPeople.map((person) => person.id);
-    const savedBudgetCount = storedBudgetNumber(savedBudget, "budgetCount", "people") || Math.max(1, savedBudgetPeople.length);
+    const savedParticipantBudgets = storedBudgetMap(savedBudget);
+    const legacyBudget = storedBudgetPerPerson(savedBudget);
+    const initialParticipantBudgets = Object.keys(savedParticipantBudgets).length
+      ? savedParticipantBudgets
+      : legacyBudget > 0 ? Object.fromEntries(savedBudgetPeople.map((person) => [person.id, legacyBudget])) : {};
     const savedFuelPrice = storedBudgetNumber(savedBudget, "fuelPrice", "gasPrice") || 175;
     const savedFuelEfficiency = storedBudgetDecimal(savedBudget, "fuelEfficiency", "efficiency") || 18;
     const savedTollCost = storedBudgetNumber(savedBudget, "toll", "tollCost");
@@ -100,11 +100,8 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     setBudgetSettings(savedBudget);
     setBudgetPeople(savedBudgetPeople);
     setBudgetParticipantIds(savedParticipantIds);
-    setParticipantBudgets(storedBudgetMap(savedBudget));
-    setBudgetPerPerson(savedBudgetPerPerson);
-    if (!budgetDraftDirty) setBudgetDraft(savedBudgetPerPerson);
+    setParticipantBudgets(initialParticipantBudgets);
     if (!budgetDraftDirty) {
-      setBudgetCountDraft(savedBudgetCount);
       setFuelPriceDraft(savedFuelPrice);
       setFuelEfficiencyDraft(savedFuelEfficiency);
       setTollCostDraft(savedTollCost);
@@ -142,17 +139,14 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   }), [expenses, purchases, travelTotals.total]);
   const budgetTotals = useMemo(() => {
     const selectedPeople = budgetPeople.filter((person) => budgetParticipantIds.includes(person.id));
-    const participantCount = Math.max(1, budgetCountDraft, selectedPeople.length);
-    const unnamedCount = Math.max(0, participantCount - selectedPeople.length);
     const variablePurchases = purchases.filter(isVariablePurchase);
-    const namedTotal = selectedPeople.reduce((sum, person) => sum + budgetAmount(participantBudgets[person.id] ?? budgetPerPerson), 0);
-    const total = namedTotal + budgetPerPerson * unnamedCount;
+    const total = selectedPeople.reduce((sum, person) => sum + budgetAmount(participantBudgets[person.id] ?? 0), 0);
     const allocated = variablePurchases.reduce((sum, purchase) => sum + purchase.planned_amount, 0);
     const purchased = variablePurchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0);
     const lodgingPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "lodging").reduce((sum, expense) => sum + expense.amount, 0);
     const activityPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "activity").reduce((sum, expense) => sum + expense.amount, 0);
-    return { participantCount, selectedCount: selectedPeople.length, unnamedCount, total, allocated, purchased, remaining: total - allocated, lodgingPaid, activityPaid };
-  }, [budgetCountDraft, budgetParticipantIds, budgetPeople, budgetPerPerson, expenses, participantBudgets, purchases]);
+    return { participantCount: selectedPeople.length, total, allocated, purchased, remaining: total - allocated, lodgingPaid, activityPaid };
+  }, [budgetParticipantIds, budgetPeople, expenses, participantBudgets, purchases]);
 
   const balances = useMemo(() => {
     const result = new Map<string, number>(people.map((person) => [person.id, 0]));
@@ -193,13 +187,11 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     event.preventDefault();
     if (!supabase || !budgetReady) return;
     setSaving(true);
-    const nextValue = budgetAmount(budgetDraft);
-    const nextCount = Math.max(1, budgetAmount(budgetCountDraft), budgetParticipantIds.length);
     const nextFuelPrice = budgetAmount(fuelPriceDraft);
     const nextFuelEfficiency = Math.max(1, budgetDecimal(fuelEfficiencyDraft));
     const nextTollCost = budgetAmount(tollCostDraft);
     const nextParkingCost = budgetAmount(parkingCostDraft);
-    const nextBudget = { ...budgetSettings, purchasePerBudget: nextValue, budgetCount: nextCount, budgetParticipantIds, participantBudgets, fuelPrice: nextFuelPrice, fuelEfficiency: nextFuelEfficiency, toll: nextTollCost, parking: nextParkingCost };
+    const nextBudget = { ...budgetSettings, purchasePerBudget: 0, budgetParticipantIds, participantBudgets, fuelPrice: nextFuelPrice, fuelEfficiency: nextFuelEfficiency, toll: nextTollCost, parking: nextParkingCost };
     const result = settingsVersion === null
       ? await supabase.from("trip_settings").insert({ trip_id: tripId, budget: nextBudget, updated_by: userId }).select("version").maybeSingle<{ version: number }>()
       : await supabase.from("trip_settings").update({ budget: nextBudget, updated_by: userId }).eq("trip_id", tripId).eq("version", settingsVersion).select("version").maybeSingle<{ version: number }>();
@@ -213,8 +205,6 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
       return;
     }
     setBudgetSettings(nextBudget);
-    setBudgetPerPerson(nextValue);
-    setBudgetCountDraft(nextCount);
     setBudgetDraftDirty(false);
     setSettingsVersion(result.data.version);
     setStatus("予算を保存しました");
@@ -223,8 +213,13 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     setBudgetParticipantIds((current) => current.includes(participantId) ? current.filter((id) => id !== participantId) : [...current, participantId]);
     setBudgetDraftDirty(true);
   };
-  const setParticipantBudget = (participantId: string, amount: number) => {
-    setParticipantBudgets((current) => ({ ...current, [participantId]: budgetAmount(amount) }));
+  const setParticipantBudget = (participantId: string, amount: number | null) => {
+    setParticipantBudgets((current) => {
+      const next = { ...current };
+      if (amount === null) delete next[participantId];
+      else next[participantId] = budgetAmount(amount);
+      return next;
+    });
     setBudgetDraftDirty(true);
   };
   const togglePurchase = async (purchase: Purchase) => {
@@ -298,12 +293,10 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     <section className="panel budget-planner">
       <div className="budget-planner-heading">
         <div>
-          <h3>人数・個別予算・交通費</h3>
-          <p>登録済みの参加者は個別に予算を設定できます。仮登録の人も予算対象に含められます。</p>
+          <h3>個別予算・交通費</h3>
+          <p>基本予算は使わず、参加者ごとの予算だけを合計します。仮登録の人も対象にできます。</p>
         </div>
         <form className="budget-planner-form budget-planner-settings" onSubmit={saveBudget}>
-          <label htmlFor="budget-per-person"><span>基本予算（円）</span><input id="budget-per-person" type="number" min="0" step="100" value={budgetDraft} onChange={(event) => { setBudgetDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
-          <label htmlFor="budget-count"><span>人数（未登録分を含む）</span><input id="budget-count" type="number" min="1" step="1" value={budgetCountDraft} onChange={(event) => { setBudgetCountDraft(Math.max(1, budgetAmount(event.target.value))); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
           <label htmlFor="fuel-price"><span>ガソリン単価（円/L）</span><input id="fuel-price" type="number" min="0" step="1" value={fuelPriceDraft} onChange={(event) => { setFuelPriceDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
           <label htmlFor="fuel-efficiency"><span>実燃費（km/L）</span><input id="fuel-efficiency" type="number" min="1" step="0.1" value={fuelEfficiencyDraft} onChange={(event) => { setFuelEfficiencyDraft(Math.max(1, Number(event.target.value) || 1)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
           <label htmlFor="toll-cost"><span>高速・有料道路代（円）</span><input id="toll-cost" type="number" min="0" step="100" value={tollCostDraft} onChange={(event) => { setTollCostDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
@@ -311,11 +304,14 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
           <button className="save-button" disabled={!budgetReady || saving}>{saving ? "保存中…" : "予算を保存"}</button>
         </form>
       </div>
-      <div className="budget-participant-settings">
-        <div className="budget-participant-heading"><strong>予算対象の参加者</strong><span>チェックを外した人は人数計算から除外できます</span></div>
-        {budgetPeople.map((person) => <div className="budget-participant-row" key={person.id}><label className="budget-participant-check"><input type="checkbox" checked={budgetParticipantIds.includes(person.id)} onChange={() => toggleBudgetParticipant(person.id)} disabled={saving} /><span><strong>{person.name}</strong><small>{person.profile_id ? "ログイン済み" : "仮登録"}</small></span></label><label className="budget-participant-amount"><span>個別予算</span><input type="number" min="0" step="100" value={participantBudgets[person.id] ?? budgetPerPerson} onChange={(event) => setParticipantBudget(person.id, Number(event.target.value) || 0)} disabled={!budgetParticipantIds.includes(person.id) || saving} /></label></div>)}
-        {!budgetPeople.length && <p className="empty-state">参加者を登録すると、個別予算を設定できます。</p>}
-      </div>
+      <details className="budget-participant-settings">
+        <summary>個別予算を設定（{budgetParticipantIds.length}/{budgetPeople.length}人）</summary>
+        <div className="budget-participant-list">
+          <div className="budget-participant-heading"><strong>予算対象の参加者</strong><span>チェックを外した人は集計から除外できます</span></div>
+          {budgetPeople.map((person) => <div className="budget-participant-row" key={person.id}><label className="budget-participant-check"><input type="checkbox" checked={budgetParticipantIds.includes(person.id)} onChange={() => toggleBudgetParticipant(person.id)} disabled={saving} /><span><strong>{person.name}</strong><small>{person.profile_id ? "ログイン済み" : "仮登録"}</small></span></label><label className="budget-participant-amount"><span>個別予算</span><input type="number" min="0" step="100" value={participantBudgets[person.id] ?? ""} placeholder="未設定" onChange={(event) => setParticipantBudget(person.id, event.target.value === "" ? null : Number(event.target.value))} disabled={!budgetParticipantIds.includes(person.id) || saving} /></label></div>)}
+          {!budgetPeople.length && <p className="empty-state">参加者を登録すると、個別予算を設定できます。</p>}
+        </div>
+      </details>
       <div className="budget-planner-metrics">
         <BudgetMetric label="予算合計" value={money(budgetTotals.total)} />
         <BudgetMetric label="リスト配分済み" value={money(budgetTotals.allocated)} />
@@ -327,7 +323,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
         <div><span>移動設定の費用</span><b>{money(travelTotals.manual)}</b><span>ガソリン代（自動）</span><b>{money(travelTotals.fuel)}</b><span>高速・有料道路代</span><b>{money(tollCostDraft)}</b><span>駐車場代</span><b>{money(parkingCostDraft)}</b></div>
         <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b><span>交通費合計</span><b>{money(totals.travel)}</b></div>
       </div>
-      <p className="budget-planner-note">予算対象 {budgetTotals.participantCount}人（登録済み {budgetTotals.selectedCount}人＋未登録分 {budgetTotals.unnamedCount}人）で計算。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。ガソリン代は旅程の「車」の距離 ÷ 実燃費 × 単価で自動計算します。</p>
+      <p className="budget-planner-note">予算対象 {budgetTotals.participantCount}人の個別予算を合計。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。ガソリン代は旅程の「車」の距離 ÷ 実燃費 × 単価で自動計算します。</p>
     </section>
 
     <h2 className="budget-title">買い物リスト</h2>
