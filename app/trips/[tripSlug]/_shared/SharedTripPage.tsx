@@ -24,8 +24,15 @@ const normalizeGroupLabel = (label: string | null | undefined) => label?.trim() 
 const blank = (date: string, assigneeIds: string[] = []): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds, travel_minutes: 0, travel_distance_km: 0, travel_mode: "car", travel_origin: "", travel_destination: "", travel_uses_toll_road: false, travel_estimated_cost: 0, travel_notes: "" });
 const CONFLICT_MESSAGE = "他の人が先に保存しました。最新を読み込みます";
 const travelModeLabels: Record<string, string> = { car: "車", train: "電車", bus: "バス", taxi: "タクシー", walk: "徒歩", bicycle: "自転車", other: "その他" };
+const mapsTravelModes: Record<string, string> = { car: "driving", train: "transit", bus: "transit", taxi: "driving", walk: "walking", bicycle: "bicycling", other: "driving" };
 const emptyTravel = (item: Itinerary): TravelValues => ({ travel_minutes: item.travel_minutes, travel_distance_km: item.travel_distance_km, travel_mode: item.travel_mode, travel_origin: item.travel_origin, travel_destination: item.travel_destination, travel_uses_toll_road: item.travel_uses_toll_road, travel_estimated_cost: item.travel_estimated_cost, travel_notes: item.travel_notes });
 const hasTravelPlan = (value: TravelValues) => value.travel_minutes > 0 || value.travel_distance_km > 0 || value.travel_estimated_cost > 0 || value.travel_uses_toll_road || Boolean(value.travel_notes.trim());
+const hasSavedRoute = (value: TravelValues) => Boolean(value.travel_origin.trim() && value.travel_destination.trim());
+const routeUrlForTravel = (value: TravelValues) => {
+  if (!hasSavedRoute(value)) return null;
+  const params = new URLSearchParams({ api: "1", origin: value.travel_origin.trim(), destination: value.travel_destination.trim(), travelmode: mapsTravelModes[value.travel_mode] ?? "driving" });
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+};
 const durationLabel = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}時間${minutes % 60 ? ` ${minutes % 60}分` : ""}` : `${minutes}分`;
 const distanceLabel = (distance: number) => `${Number(distance).toLocaleString("ja-JP", { maximumFractionDigits: 1 })}km`;
 const moneyLabel = (amount: number) => `${amount.toLocaleString("ja-JP")}円`;
@@ -252,9 +259,10 @@ export default function SharedTripPage({
     <label>メモ<textarea value={value.notes} onChange={(e) => setValue({ ...value, notes: e.target.value })} /></label>
   </>;
   const travelFields = (value: TravelValues, setValue: (value: TravelValues) => void) => <div className="travel-fields">
+    <datalist id="trip-places-options">{places.map((place) => <option key={place.id} value={place.name} />)}</datalist>
     <div className="travel-route-fields">
-      <label>出発地<input required value={value.travel_origin} placeholder="例：自宅" onChange={(e) => setValue({ ...value, travel_origin: e.target.value })} /></label>
-      <label>目的地<input required value={value.travel_destination} placeholder="例：竹内宅" onChange={(e) => setValue({ ...value, travel_destination: e.target.value })} /></label>
+      <label>出発地<input required list="trip-places-options" value={value.travel_origin} placeholder="登録場所から選択／自由入力" onChange={(e) => setValue({ ...value, travel_origin: e.target.value })} /></label>
+      <label>目的地<input required list="trip-places-options" value={value.travel_destination} placeholder="登録場所から選択／自由入力" onChange={(e) => setValue({ ...value, travel_destination: e.target.value })} /></label>
     </div>
     <div className="travel-field-grid">
       <label>所要時間（分）<input type="number" min="0" step="5" value={value.travel_minutes || ""} placeholder="例：45" onChange={(e) => setValue({ ...value, travel_minutes: Math.max(0, Number(e.target.value) || 0) })} /></label>
@@ -282,17 +290,24 @@ export default function SharedTripPage({
     </article>;
   };
   const renderTravelSegment = (from: Itinerary, to: Itinerary, compact = false) => {
-    const fromLocation = locationForItem(from) || from.title;
-    const toLocation = locationForItem(to) || to.title;
+    const fromPlace = locationForItem(from);
+    const toPlace = locationForItem(to);
+    if ((from.place_id && from.place_id === to.place_id) || (fromPlace && toPlace && fromPlace === toPlace)) return null;
+    const fromLocation = fromPlace || from.title;
+    const toLocation = toPlace || to.title;
     const rawTravel = emptyTravel(to);
     const travel = { ...rawTravel, travel_origin: rawTravel.travel_origin.trim() || fromLocation, travel_destination: rawTravel.travel_destination.trim() || toLocation };
     const editing = editTravel?.id === to.id;
+    const routeUrl = routeUrlForTravel(travel);
+    const hasPlan = hasTravelPlan(travel);
+    const hasRoute = hasSavedRoute(rawTravel);
     return <div className={`timeline-travel ${compact ? "timeline-travel-compact" : ""}`} key={`travel-${from.id}-${to.id}`}>
       <div className="timeline-travel-spacer" aria-hidden="true" /><div className="timeline-travel-rail" aria-hidden="true" />
       <div className="timeline-travel-card">
-        {editing ? <form className="travel-form" onSubmit={saveTravel}><div className="travel-form-heading"><strong>移動区間の設定</strong><span>出発地と目的地を指定</span></div>{travelFields(editTravel, (value) => setEditTravel({ ...editTravel, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>移動を保存</button><button type="button" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div></form> : <>
-          <div className="timeline-travel-heading"><div><span className="timeline-travel-kicker">移動区間</span><div className="timeline-travel-route"><div><small>出発地</small><strong>{travel.travel_origin}</strong></div><span className="timeline-travel-route-divider" aria-hidden="true" /><div><small>目的地</small><strong>{travel.travel_destination}</strong></div></div></div><button className="text-button" onClick={() => setEditTravel({ id: to.id, version: to.version, ...travel })}>{hasTravelPlan(travel) ? "編集" : "計画する"}</button></div>
-          {hasTravelPlan(travel) ? <div className="timeline-travel-metrics"><span>{travelModeLabels[travel.travel_mode] ?? travel.travel_mode}</span>{travel.travel_minutes > 0 && <span>{durationLabel(travel.travel_minutes)}</span>}{travel.travel_distance_km > 0 && <span>{distanceLabel(travel.travel_distance_km)}</span>}{travel.travel_uses_toll_road && <span className="toll-badge">高速・有料</span>}{travel.travel_estimated_cost > 0 && <b>{moneyLabel(travel.travel_estimated_cost)}</b>}</div> : <p className="timeline-travel-empty">所要時間・距離・費用を登録できます。</p>}
+        {editing ? <form className="travel-form" onSubmit={saveTravel}><div className="travel-form-heading"><div><strong>移動区間の設定</strong><span>出発地と目的地を指定</span></div><button type="button" className="text-button travel-inline-cancel" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div>{travelFields(editTravel, (value) => setEditTravel({ ...editTravel, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>移動を保存</button><button type="button" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div></form> : <>
+          <div className="timeline-travel-heading"><div><span className="timeline-travel-kicker">移動区間</span><div className="timeline-travel-route"><div><small>出発地</small><strong>{travel.travel_origin}</strong></div><span className="timeline-travel-route-divider" aria-hidden="true" /><div><small>目的地</small><strong>{travel.travel_destination}</strong></div></div></div><button className="text-button" onClick={() => setEditTravel({ id: to.id, version: to.version, ...travel })}>{hasPlan || hasRoute ? "編集" : "計画する"}</button></div>
+          {hasPlan ? <div className="timeline-travel-metrics"><span>{travelModeLabels[travel.travel_mode] ?? travel.travel_mode}</span>{travel.travel_minutes > 0 && <span>{durationLabel(travel.travel_minutes)}</span>}{travel.travel_distance_km > 0 && <span>{distanceLabel(travel.travel_distance_km)}</span>}{travel.travel_uses_toll_road && <span className="toll-badge">高速・有料</span>}{travel.travel_estimated_cost > 0 && <b>{moneyLabel(travel.travel_estimated_cost)}</b>}</div> : <p className="timeline-travel-empty">所要時間・距離・費用を登録できます。</p>}
+          {routeUrl && <div className="timeline-travel-links"><a href={routeUrl} target="_blank" rel="noreferrer">Googleマップでルートを確認・共有</a></div>}
           {travel.travel_notes && <p className="timeline-travel-note">{travel.travel_notes}</p>}
         </>}
       </div>
