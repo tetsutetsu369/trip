@@ -8,7 +8,7 @@ import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 type Person = { id: string; name: string };
 type Purchase = { id: string; name: string; category: string; planned_amount: number; purchased_amount: number; is_purchased: boolean; memo: string; version: number };
 type ReceiptItem = { id: string; name: string; category: string; net_amount: number; tax_rate: number; tax_amount: number; gross_amount: number };
-type Receipt = { id: string; store_name: string; purchased_on: string | null; payer_id: string | null; memo: string; items: ReceiptItem[] };
+type Receipt = { id: string; store_name: string; purchased_on: string | null; payer_id: string | null; memo: string; version: number; items: ReceiptItem[] };
 type Expense = { id: string; receipt_id: string | null; title: string; category: string; amount: number; payer_id: string | null; payment_status: string; settlement_status: string; memo: string; version: number };
 type Share = { expense_id: string; user_id: string; amount: number };
 type Settlement = { id: string; from_user_id: string; to_user_id: string; amount: number; status: string };
@@ -56,7 +56,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult] = await Promise.all([
       supabase.from("trip_settings").select("budget,version").eq("trip_id", tripId).maybeSingle<TripSettings>(),
       supabase.from("purchases").select("id,name,category,planned_amount,purchased_amount,is_purchased,memo,version").eq("trip_id", tripId).order("created_at"),
-      supabase.from("receipts").select("id,store_name,purchased_on,payer_id,memo").eq("trip_id", tripId).order("purchased_on", { ascending: false }),
+      supabase.from("receipts").select("id,store_name,purchased_on,payer_id,memo,version").eq("trip_id", tripId).order("purchased_on", { ascending: false }),
       supabase.from("receipt_items").select("id,receipt_id,name,category,net_amount,tax_rate,tax_amount,gross_amount"),
       supabase.from("expenses").select("id,receipt_id,title,category,amount,payer_id,payment_status,settlement_status,memo,version").eq("trip_id", tripId).order("created_at", { ascending: false }),
       supabase.from("expense_shares").select("expense_id,user_id,amount"),
@@ -196,6 +196,17 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     }
     await load(data ? "立替人を更新しました" : "他の人が先に更新しました");
   };
+  const removeReceipt = async (receipt: Receipt) => {
+    if (!supabase || !window.confirm("「" + receipt.store_name + "」のレシートと紐づく費用・明細・負担額を削除しますか？この操作は元に戻せません。")) return;
+    setSaving(true);
+    const { data, error } = await supabase.rpc("delete_receipt_expense", { target_receipt_id: receipt.id, expected_version: receipt.version });
+    setSaving(false);
+    if (error || data?.status !== "ok") {
+      await load(data?.status === "forbidden" ? "権限がありません" : data?.status === "conflict" ? "他の人が先に更新しました" : "レシートを削除できませんでした");
+      return;
+    }
+    await load("レシートと紐づく費用を削除しました");
+  };
   const submitReceipt = async (event: FormEvent) => {
     event.preventDefault(); if (!supabase || !receiptDraft.store_name.trim() || !items.some((item) => item.name.trim() && item.net_amount > 0)) return; setSaving(true);
     const inputItems = items.filter((item) => item.name.trim() && item.net_amount > 0).map((item) => { const taxAmount = Math.floor(item.net_amount * item.tax_rate); return { name: item.name.trim(), category: item.category, net_amount: item.net_amount, tax_rate: item.tax_rate, tax_amount: taxAmount, gross_amount: item.net_amount + taxAmount }; });
@@ -247,6 +258,22 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
 
     <h2 className="budget-title">レシートを登録</h2>
     <section className="panel finance-panel"><form className="finance-form" onSubmit={submitReceipt}><div className="fields"><label className="field"><span>店名</span><input required value={receiptDraft.store_name} onChange={(event) => setReceiptDraft({ ...receiptDraft, store_name: event.target.value })} /></label><label className="field"><span>購入日</span><input type="date" value={receiptDraft.purchased_on} onChange={(event) => setReceiptDraft({ ...receiptDraft, purchased_on: event.target.value })} /></label><label className="field"><span>立替えた人</span><select value={receiptDraft.payer_id} onChange={(event) => setReceiptDraft({ ...receiptDraft, payer_id: event.target.value })}>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><label className="field"><span>メモ</span><input value={receiptDraft.memo} onChange={(event) => setReceiptDraft({ ...receiptDraft, memo: event.target.value })} /></label></div><div className="finance-items"><div className="finance-subheading"><h3>明細</h3><button type="button" className="text-button" onClick={addItem}>＋ 明細を追加</button></div>{items.map((item, index) => <div className="finance-item" key={index}><input required placeholder="品目" value={item.name} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, name: event.target.value } : current))} /><select value={item.category} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, category: event.target.value } : current))}>{categories.map((category) => <option key={category} value={category}>{categoryLabel[category]}</option>)}</select><input required type="number" min="0" placeholder="税抜" value={item.net_amount || ""} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, net_amount: Math.max(0, Number(event.target.value) || 0) } : current))} /><select value={item.tax_rate} onChange={(event) => setItems(items.map((current, itemIndex) => itemIndex === index ? { ...current, tax_rate: Number(event.target.value) } : current))}><option value="0.1">10%</option><option value="0.08">8%</option><option value="0">非課税</option></select></div>)}</div><p className="finance-note">登録時に税込額を計算し、承認済み参加者全員へ均等に負担額を作成します。</p><button className="save-button" disabled={saving}>レシートと費用を保存</button></form></section>
+    <section className="panel finance-panel">
+      <div className="finance-subheading"><h3>登録済みレシート</h3></div>
+      <div className="finance-list">
+        {receipts.map((receipt) => <div className="finance-receipt" key={receipt.id}>
+          <div className="finance-receipt-main">
+            <strong>{receipt.store_name}</strong>
+            <span>{receipt.purchased_on || "購入日未設定"}｜立替えた人：{nameOf(receipt.payer_id)}</span>
+            {receipt.memo && <small>{receipt.memo}</small>}
+          </div>
+          <b>{money(receipt.items.reduce((sum, item) => sum + item.gross_amount, 0))}</b>
+          <button className="text-button danger" onClick={() => void removeReceipt(receipt)} disabled={saving}>削除</button>
+        </div>)}
+      </div>
+      {!receipts.length && <p className="empty-state">登録済みレシートはありません。</p>}
+      {!!receipts.length && <p className="finance-note">削除すると、紐づく立替費用・明細・負担額も削除されます。</p>}
+    </section>
 
     <h2 className="budget-title">立替費用</h2>
     <section className="panel finance-panel"><div className="finance-list">{expenses.map((expense) => editingExpense?.id === expense.id ? <form className="expense-edit-form" key={expense.id} onSubmit={saveExpensePayer}><div><strong>{expense.title}</strong><span>{money(expense.amount)}｜{categoryLabel[expense.category] ?? expense.category}</span></div><label><span>立替えた人</span><select aria-label={`${expense.title}の立替えた人`} value={editingExpense.payer_id ?? ""} onChange={(event) => setEditingExpense({ ...editingExpense, payer_id: event.target.value || null })}><option value="">立替人未設定</option>{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><div className="expense-edit-actions"><button className="save-button" disabled={saving}>保存</button><button type="button" className="text-button" onClick={() => setEditingExpense(null)} disabled={saving}>キャンセル</button></div></form> : <div className="finance-expense" key={expense.id}><div className="finance-expense-main"><strong>{expense.title}</strong><span>{categoryLabel[expense.category] ?? expense.category}</span><span className="expense-payer">立替えた人：{nameOf(expense.payer_id)}</span></div><b>{money(expense.amount)}</b><small>{expense.settlement_status === "settled" ? "精算済み" : "未精算"}</small><button className="text-button" onClick={() => setEditingExpense(expense)} disabled={saving}>立替人を編集</button></div>)}</div>{!expenses.length && <p className="empty-state">立替費用はまだありません。</p>}</section>
