@@ -6,13 +6,14 @@ import TripTabs from "@/app/components/TripTabs";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 type Person = { id: string; name: string };
+type BudgetPerson = { id: string; name: string; profile_id: string | null };
 type Purchase = { id: string; name: string; category: string; planned_amount: number; purchased_amount: number; is_purchased: boolean; memo: string; version: number };
 type ReceiptItem = { id: string; name: string; category: string; net_amount: number; tax_rate: number; tax_amount: number; gross_amount: number };
 type Receipt = { id: string; store_name: string; purchased_on: string | null; payer_id: string | null; memo: string; version: number; items: ReceiptItem[] };
 type Expense = { id: string; receipt_id: string | null; title: string; category: string; amount: number; payer_id: string | null; payment_status: string; settlement_status: string; memo: string; version: number };
 type Share = { expense_id: string; user_id: string; amount: number };
 type Settlement = { id: string; from_user_id: string; to_user_id: string; amount: number; status: string };
-type TravelPlan = { travel_estimated_cost: number };
+type TravelPlan = { travel_estimated_cost: number; travel_distance_km: number; travel_mode: string; travel_uses_toll_road: boolean };
 type DraftItem = { name: string; category: string; net_amount: number; tax_rate: number };
 
 const money = (value: number) => new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0);
@@ -23,8 +24,19 @@ const budgetAmount = (value: unknown) => {
   const amount = typeof value === "number" ? value : Number(value);
   return Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
 };
+const budgetDecimal = (value: unknown) => {
+  const amount = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(amount) ? Math.max(0, amount) : 0;
+};
 const budgetSettingsOf = (value: unknown): BudgetSettings => value && typeof value === "object" && !Array.isArray(value) ? value as BudgetSettings : {};
 const storedBudgetPerPerson = (settings: BudgetSettings) => budgetAmount(settings.purchasePerBudget ?? settings.purchasePerPerson ?? 0);
+const storedBudgetNumber = (settings: BudgetSettings, ...keys: string[]) => budgetAmount(keys.map((key) => settings[key]).find((value) => value !== undefined) ?? 0);
+const storedBudgetDecimal = (settings: BudgetSettings, ...keys: string[]) => budgetDecimal(keys.map((key) => settings[key]).find((value) => value !== undefined) ?? 0);
+const storedBudgetMap = (settings: BudgetSettings) => {
+  const value = settings.participantBudgets;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, number>;
+  return Object.fromEntries(Object.entries(value).map(([key, amount]) => [key, budgetAmount(amount)]));
+};
 const isVariablePurchase = (purchase: Purchase) => purchase.category !== "lodging" && purchase.category !== "activity";
 const categories = ["food", "equipment", "supplies", "lodging", "activity", "transport", "other"] as const;
 const categoryLabel: Record<string, string> = { food: "食費", equipment: "備品", supplies: "消耗品", lodging: "宿泊", activity: "遊び", transport: "移動", receipt: "レシート", other: "その他" };
@@ -32,6 +44,9 @@ const categoryLabel: Record<string, string> = { food: "食費", equipment: "備�
 export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = null, userId }: { tripId: string; tripSlug: string; tripName: string; avatarUrl?: string | null; userId: string }) {
   const supabase = createBrowserSupabaseClient();
   const [people, setPeople] = useState<Person[]>([]);
+  const [budgetPeople, setBudgetPeople] = useState<BudgetPerson[]>([]);
+  const [budgetParticipantIds, setBudgetParticipantIds] = useState<string[]>([]);
+  const [participantBudgets, setParticipantBudgets] = useState<Record<string, number>>({});
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -41,6 +56,11 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>({});
   const [budgetPerPerson, setBudgetPerPerson] = useState(0);
   const [budgetDraft, setBudgetDraft] = useState(0);
+  const [budgetCountDraft, setBudgetCountDraft] = useState(1);
+  const [fuelPriceDraft, setFuelPriceDraft] = useState(175);
+  const [fuelEfficiencyDraft, setFuelEfficiencyDraft] = useState(18);
+  const [tollCostDraft, setTollCostDraft] = useState(0);
+  const [parkingCostDraft, setParkingCostDraft] = useState(0);
   const [settingsVersion, setSettingsVersion] = useState<number | null>(null);
   const [budgetReady, setBudgetReady] = useState(false);
   const [budgetDraftDirty, setBudgetDraftDirty] = useState(false);
@@ -55,7 +75,7 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const nameOf = (id: string | null) => people.find((person) => person.id === id)?.name ?? "未設定";
   const load = async (message = "みんなに共有済み") => {
     if (!supabase) { setStatus("Supabase未接続"); return; }
-    const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult, travelResult] = await Promise.all([
+    const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult, travelResult, budgetPeopleResult] = await Promise.all([
       supabase.from("trip_settings").select("budget,version").eq("trip_id", tripId).maybeSingle<TripSettings>(),
       supabase.from("purchases").select("id,name,category,planned_amount,purchased_amount,is_purchased,memo,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("receipts").select("id,store_name,purchased_on,payer_id,memo,version").eq("trip_id", tripId).order("purchased_on", { ascending: false }),
@@ -64,14 +84,32 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
       supabase.from("expense_shares").select("expense_id,user_id,amount"),
       supabase.from("settlements").select("id,from_user_id,to_user_id,amount,status").eq("trip_id", tripId).order("created_at", { ascending: false }),
       supabase.from("trip_members").select("user_id").eq("trip_id", tripId).eq("status", "approved"),
-      supabase.from("itinerary_items").select("travel_estimated_cost").eq("trip_id", tripId),
+      supabase.from("itinerary_items").select("travel_estimated_cost,travel_distance_km,travel_mode,travel_uses_toll_road").eq("trip_id", tripId),
+      supabase.from("trip_participants").select("id,display_name,profile_id").eq("trip_id", tripId).order("created_at"),
     ]);
-    if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error || travelResult.error) { setStatus("費用データを読み込めませんでした"); return; }
+    if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error || travelResult.error || budgetPeopleResult.error) { setStatus("費用データを読み込めませんでした"); return; }
     const savedBudget = budgetSettingsOf(settingsResult.data?.budget);
     const savedBudgetPerPerson = storedBudgetPerPerson(savedBudget);
+    const savedBudgetPeople: BudgetPerson[] = (budgetPeopleResult.data ?? []).map((person) => ({ id: person.id, name: person.display_name, profile_id: person.profile_id }));
+    const savedParticipantIds = Array.isArray(savedBudget.budgetParticipantIds) ? savedBudget.budgetParticipantIds.filter((id): id is string => typeof id === "string" && savedBudgetPeople.some((person) => person.id === id)) : savedBudgetPeople.map((person) => person.id);
+    const savedBudgetCount = storedBudgetNumber(savedBudget, "budgetCount", "people") || Math.max(1, savedBudgetPeople.length);
+    const savedFuelPrice = storedBudgetNumber(savedBudget, "fuelPrice", "gasPrice") || 175;
+    const savedFuelEfficiency = storedBudgetDecimal(savedBudget, "fuelEfficiency", "efficiency") || 18;
+    const savedTollCost = storedBudgetNumber(savedBudget, "toll", "tollCost");
+    const savedParkingCost = storedBudgetNumber(savedBudget, "parking", "parkingCost");
     setBudgetSettings(savedBudget);
+    setBudgetPeople(savedBudgetPeople);
+    setBudgetParticipantIds(savedParticipantIds);
+    setParticipantBudgets(storedBudgetMap(savedBudget));
     setBudgetPerPerson(savedBudgetPerPerson);
     if (!budgetDraftDirty) setBudgetDraft(savedBudgetPerPerson);
+    if (!budgetDraftDirty) {
+      setBudgetCountDraft(savedBudgetCount);
+      setFuelPriceDraft(savedFuelPrice);
+      setFuelEfficiencyDraft(savedFuelEfficiency);
+      setTollCostDraft(savedTollCost);
+      setParkingCostDraft(savedParkingCost);
+    }
     setSettingsVersion(settingsResult.data?.version ?? null);
     setBudgetReady(true);
     const userIds = (memberResult.data ?? []).map((member) => member.user_id);
@@ -90,22 +128,31 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   };
   useEffect(() => { void load(); }, [tripId]);
 
+  const travelTotals = useMemo(() => {
+    const distance = travelPlans.filter((item) => item.travel_mode === "car").reduce((sum, item) => sum + Number(item.travel_distance_km || 0), 0);
+    const manual = travelPlans.reduce((sum, item) => sum + item.travel_estimated_cost, 0);
+    const fuel = fuelEfficiencyDraft > 0 ? Math.round(distance / fuelEfficiencyDraft * fuelPriceDraft) : 0;
+    return { distance, manual, fuel, total: manual + fuel + tollCostDraft + parkingCostDraft };
+  }, [fuelEfficiencyDraft, fuelPriceDraft, parkingCostDraft, tollCostDraft, travelPlans]);
   const totals = useMemo(() => ({
     planned: purchases.reduce((sum, purchase) => sum + purchase.planned_amount, 0),
     purchased: purchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0),
     expenses: expenses.reduce((sum, expense) => sum + expense.amount, 0),
-    travel: travelPlans.reduce((sum, item) => sum + item.travel_estimated_cost, 0),
-  }), [purchases, expenses, travelPlans]);
+    travel: travelTotals.total,
+  }), [expenses, purchases, travelTotals.total]);
   const budgetTotals = useMemo(() => {
-    const participantCount = Math.max(1, people.length);
+    const selectedPeople = budgetPeople.filter((person) => budgetParticipantIds.includes(person.id));
+    const participantCount = Math.max(1, budgetCountDraft, selectedPeople.length);
+    const unnamedCount = Math.max(0, participantCount - selectedPeople.length);
     const variablePurchases = purchases.filter(isVariablePurchase);
-    const total = budgetPerPerson * participantCount;
+    const namedTotal = selectedPeople.reduce((sum, person) => sum + budgetAmount(participantBudgets[person.id] ?? budgetPerPerson), 0);
+    const total = namedTotal + budgetPerPerson * unnamedCount;
     const allocated = variablePurchases.reduce((sum, purchase) => sum + purchase.planned_amount, 0);
     const purchased = variablePurchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0);
     const lodgingPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "lodging").reduce((sum, expense) => sum + expense.amount, 0);
     const activityPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "activity").reduce((sum, expense) => sum + expense.amount, 0);
-    return { participantCount, total, allocated, purchased, remaining: total - allocated, lodgingPaid, activityPaid };
-  }, [budgetPerPerson, expenses, people.length, purchases]);
+    return { participantCount, selectedCount: selectedPeople.length, unnamedCount, total, allocated, purchased, remaining: total - allocated, lodgingPaid, activityPaid };
+  }, [budgetCountDraft, budgetParticipantIds, budgetPeople, budgetPerPerson, expenses, participantBudgets, purchases]);
 
   const balances = useMemo(() => {
     const result = new Map<string, number>(people.map((person) => [person.id, 0]));
@@ -147,7 +194,12 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     if (!supabase || !budgetReady) return;
     setSaving(true);
     const nextValue = budgetAmount(budgetDraft);
-    const nextBudget = { ...budgetSettings, purchasePerBudget: nextValue };
+    const nextCount = Math.max(1, budgetAmount(budgetCountDraft), budgetParticipantIds.length);
+    const nextFuelPrice = budgetAmount(fuelPriceDraft);
+    const nextFuelEfficiency = Math.max(1, budgetDecimal(fuelEfficiencyDraft));
+    const nextTollCost = budgetAmount(tollCostDraft);
+    const nextParkingCost = budgetAmount(parkingCostDraft);
+    const nextBudget = { ...budgetSettings, purchasePerBudget: nextValue, budgetCount: nextCount, budgetParticipantIds, participantBudgets, fuelPrice: nextFuelPrice, fuelEfficiency: nextFuelEfficiency, toll: nextTollCost, parking: nextParkingCost };
     const result = settingsVersion === null
       ? await supabase.from("trip_settings").insert({ trip_id: tripId, budget: nextBudget, updated_by: userId }).select("version").maybeSingle<{ version: number }>()
       : await supabase.from("trip_settings").update({ budget: nextBudget, updated_by: userId }).eq("trip_id", tripId).eq("version", settingsVersion).select("version").maybeSingle<{ version: number }>();
@@ -162,9 +214,18 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     }
     setBudgetSettings(nextBudget);
     setBudgetPerPerson(nextValue);
+    setBudgetCountDraft(nextCount);
     setBudgetDraftDirty(false);
     setSettingsVersion(result.data.version);
     setStatus("予算を保存しました");
+  };
+  const toggleBudgetParticipant = (participantId: string) => {
+    setBudgetParticipantIds((current) => current.includes(participantId) ? current.filter((id) => id !== participantId) : [...current, participantId]);
+    setBudgetDraftDirty(true);
+  };
+  const setParticipantBudget = (participantId: string, amount: number) => {
+    setParticipantBudgets((current) => ({ ...current, [participantId]: budgetAmount(amount) }));
+    setBudgetDraftDirty(true);
   };
   const togglePurchase = async (purchase: Purchase) => {
     if (!supabase) return; setSaving(true);
@@ -237,13 +298,23 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     <section className="panel budget-planner">
       <div className="budget-planner-heading">
         <div>
-          <h3>1人当たりの予算</h3>
-          <p>宿泊代とアクティビティ代を除く、食費・備品・消耗品・その他の買い物に使う枠です。</p>
+          <h3>人数・個別予算・交通費</h3>
+          <p>登録済みの参加者は個別に予算を設定できます。仮登録の人も予算対象に含められます。</p>
         </div>
-        <form className="budget-planner-form" onSubmit={saveBudget}>
-          <label htmlFor="budget-per-person"><span>予算（円）</span><input id="budget-per-person" type="number" min="0" step="100" value={budgetDraft} onChange={(event) => { setBudgetDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+        <form className="budget-planner-form budget-planner-settings" onSubmit={saveBudget}>
+          <label htmlFor="budget-per-person"><span>基本予算（円）</span><input id="budget-per-person" type="number" min="0" step="100" value={budgetDraft} onChange={(event) => { setBudgetDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <label htmlFor="budget-count"><span>人数（未登録分を含む）</span><input id="budget-count" type="number" min="1" step="1" value={budgetCountDraft} onChange={(event) => { setBudgetCountDraft(Math.max(1, budgetAmount(event.target.value))); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <label htmlFor="fuel-price"><span>ガソリン単価（円/L）</span><input id="fuel-price" type="number" min="0" step="1" value={fuelPriceDraft} onChange={(event) => { setFuelPriceDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <label htmlFor="fuel-efficiency"><span>実燃費（km/L）</span><input id="fuel-efficiency" type="number" min="1" step="0.1" value={fuelEfficiencyDraft} onChange={(event) => { setFuelEfficiencyDraft(Math.max(1, Number(event.target.value) || 1)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <label htmlFor="toll-cost"><span>高速・有料道路代（円）</span><input id="toll-cost" type="number" min="0" step="100" value={tollCostDraft} onChange={(event) => { setTollCostDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <label htmlFor="parking-cost"><span>駐車場代（円）</span><input id="parking-cost" type="number" min="0" step="100" value={parkingCostDraft} onChange={(event) => { setParkingCostDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
           <button className="save-button" disabled={!budgetReady || saving}>{saving ? "保存中…" : "予算を保存"}</button>
         </form>
+      </div>
+      <div className="budget-participant-settings">
+        <div className="budget-participant-heading"><strong>予算対象の参加者</strong><span>チェックを外した人は人数計算から除外できます</span></div>
+        {budgetPeople.map((person) => <div className="budget-participant-row" key={person.id}><label className="budget-participant-check"><input type="checkbox" checked={budgetParticipantIds.includes(person.id)} onChange={() => toggleBudgetParticipant(person.id)} disabled={saving} /><span><strong>{person.name}</strong><small>{person.profile_id ? "ログイン済み" : "仮登録"}</small></span></label><label className="budget-participant-amount"><span>個別予算</span><input type="number" min="0" step="100" value={participantBudgets[person.id] ?? budgetPerPerson} onChange={(event) => setParticipantBudget(person.id, Number(event.target.value) || 0)} disabled={!budgetParticipantIds.includes(person.id) || saving} /></label></div>)}
+        {!budgetPeople.length && <p className="empty-state">参加者を登録すると、個別予算を設定できます。</p>}
       </div>
       <div className="budget-planner-metrics">
         <BudgetMetric label="予算合計" value={money(budgetTotals.total)} />
@@ -253,9 +324,10 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
       </div>
       <div className="budget-fixed-costs">
         <span>予算枠とは別に管理する費用</span>
-        <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b><span>移動予定</span><b>{money(totals.travel)}</b></div>
+        <div><span>移動設定の費用</span><b>{money(travelTotals.manual)}</b><span>ガソリン代（自動）</span><b>{money(travelTotals.fuel)}</b><span>高速・有料道路代</span><b>{money(tollCostDraft)}</b><span>駐車場代</span><b>{money(parkingCostDraft)}</b></div>
+        <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b><span>交通費合計</span><b>{money(totals.travel)}</b></div>
       </div>
-      <p className="budget-planner-note">承認済み参加者 {budgetTotals.participantCount}人 × 1人当たり予算で計算。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。</p>
+      <p className="budget-planner-note">予算対象 {budgetTotals.participantCount}人（登録済み {budgetTotals.selectedCount}人＋未登録分 {budgetTotals.unnamedCount}人）で計算。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。ガソリン代は旅程の「車」の距離 ÷ 実燃費 × 単価で自動計算します。</p>
     </section>
 
     <h2 className="budget-title">買い物リスト</h2>

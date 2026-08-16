@@ -9,7 +9,7 @@ import PlacesManager from "../itinerary/PlacesManager";
 // 「準備」は持ち物とメモを1画面に統合したタブ。
 type Focus = "itinerary" | "prep";
 type Person = { id: string; display_name: string; avatar_color: string | null };
-type TravelValues = { travel_minutes: number; travel_distance_km: number; travel_mode: string; travel_origin: string; travel_destination: string; travel_uses_toll_road: boolean; travel_estimated_cost: number; travel_notes: string };
+type TravelValues = { travel_minutes: number; travel_distance_km: number; travel_mode: string; travel_origin_place_id: string | null; travel_destination_place_id: string | null; travel_origin: string; travel_destination: string; travel_uses_toll_road: boolean; travel_estimated_cost: number; travel_notes: string };
 type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null; group_label: string; notes: string; sort_order: number; version: number } & TravelValues;
 type Packing = { id: string; name: string; memo: string; is_ready: boolean; version: number };
 type Note = { id: string; title: string; body: string; version: number };
@@ -21,16 +21,20 @@ type SaveResult = { status: "ok" | "conflict" | "forbidden" | "invalid"; id?: st
 
 const DEFAULT_GROUP_LABEL = "全員";
 const normalizeGroupLabel = (label: string | null | undefined) => label?.trim() || DEFAULT_GROUP_LABEL;
-const blank = (date: string, assigneeIds: string[] = []): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds, travel_minutes: 0, travel_distance_km: 0, travel_mode: "car", travel_origin: "", travel_destination: "", travel_uses_toll_road: false, travel_estimated_cost: 0, travel_notes: "" });
+const blank = (date: string, assigneeIds: string[] = []): Draft => ({ event_date: date, event_time: "", title: "", place: "", place_id: null, notes: "", assigneeIds, travel_minutes: 0, travel_distance_km: 0, travel_mode: "car", travel_origin_place_id: null, travel_destination_place_id: null, travel_origin: "", travel_destination: "", travel_uses_toll_road: false, travel_estimated_cost: 0, travel_notes: "" });
 const CONFLICT_MESSAGE = "他の人が先に保存しました。最新を読み込みます";
 const travelModeLabels: Record<string, string> = { car: "車", train: "電車", bus: "バス", taxi: "タクシー", walk: "徒歩", bicycle: "自転車", other: "その他" };
 const mapsTravelModes: Record<string, string> = { car: "driving", train: "transit", bus: "transit", taxi: "driving", walk: "walking", bicycle: "bicycling", other: "driving" };
-const emptyTravel = (item: Itinerary): TravelValues => ({ travel_minutes: item.travel_minutes, travel_distance_km: item.travel_distance_km, travel_mode: item.travel_mode, travel_origin: item.travel_origin, travel_destination: item.travel_destination, travel_uses_toll_road: item.travel_uses_toll_road, travel_estimated_cost: item.travel_estimated_cost, travel_notes: item.travel_notes });
+const emptyTravel = (item: Itinerary): TravelValues => ({ travel_minutes: item.travel_minutes, travel_distance_km: item.travel_distance_km, travel_mode: item.travel_mode, travel_origin_place_id: item.travel_origin_place_id, travel_destination_place_id: item.travel_destination_place_id, travel_origin: item.travel_origin, travel_destination: item.travel_destination, travel_uses_toll_road: item.travel_uses_toll_road, travel_estimated_cost: item.travel_estimated_cost, travel_notes: item.travel_notes });
 const hasTravelPlan = (value: TravelValues) => value.travel_minutes > 0 || value.travel_distance_km > 0 || value.travel_estimated_cost > 0 || value.travel_uses_toll_road || Boolean(value.travel_notes.trim());
-const hasSavedRoute = (value: TravelValues) => Boolean(value.travel_origin.trim() && value.travel_destination.trim());
-const routeUrlForTravel = (value: TravelValues) => {
-  if (!hasSavedRoute(value)) return null;
-  const params = new URLSearchParams({ api: "1", origin: value.travel_origin.trim(), destination: value.travel_destination.trim(), travelmode: mapsTravelModes[value.travel_mode] ?? "driving" });
+const normalizePlaceName = (value: string) => value.trim().toLocaleLowerCase("ja-JP");
+const placeForTravel = (placeId: string | null, name: string, places: Place[]) => (placeId ? places.find((place) => place.id === placeId) : null) ?? places.find((place) => normalizePlaceName(place.name) === normalizePlaceName(name)) ?? null;
+const routeUrlForTravel = (value: TravelValues, places: Place[]) => {
+  const origin = placeForTravel(value.travel_origin_place_id, value.travel_origin, places);
+  const destination = placeForTravel(value.travel_destination_place_id, value.travel_destination, places);
+  if (!origin || !destination) return null;
+  const params = new URLSearchParams({ api: "1", origin: origin.name, destination: destination.name, travelmode: mapsTravelModes[value.travel_mode] ?? "driving" });
+  if (!value.travel_uses_toll_road) params.set("avoid", "tolls");
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 };
 const durationLabel = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}時間${minutes % 60 ? ` ${minutes % 60}分` : ""}` : `${minutes}分`;
@@ -78,7 +82,7 @@ export default function SharedTripPage({
   const load = async (message = "") => {
     if (!supabase) return;
     const [i, p, n, placesResult] = await Promise.all([
-      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version,travel_minutes,travel_distance_km,travel_mode,travel_origin,travel_destination,travel_uses_toll_road,travel_estimated_cost,travel_notes").eq("trip_id", tripId),
+      supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version,travel_minutes,travel_distance_km,travel_mode,travel_origin_place_id,travel_destination_place_id,travel_origin,travel_destination,travel_uses_toll_road,travel_estimated_cost,travel_notes").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
       supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name"),
@@ -124,6 +128,7 @@ export default function SharedTripPage({
   const routeUrlForItems = (items: Itinerary[]) => {
     const eventDates = new Set(items.map((item) => item.event_date ?? tripDates.start));
     if (eventDates.size !== 1) return null;
+    if (items.some((item) => !item.place_id || !places.some((place) => place.id === item.place_id))) return null;
     const locations = Array.from(new Set(items.map(locationForItem).filter(Boolean)));
     if (locations.length < 2 || locations.length > 4) return null;
     const params = new URLSearchParams({ api: "1", origin: locations[0], destination: locations[locations.length - 1], travelmode: "driving" });
@@ -158,6 +163,8 @@ export default function SharedTripPage({
       item_travel_minutes: Math.max(0, Math.floor(value.travel_minutes || 0)),
       item_travel_distance_km: Math.max(0, Number(value.travel_distance_km || 0)),
       item_travel_mode: value.travel_mode,
+      item_travel_origin_place_id: placeForTravel(value.travel_origin_place_id, value.travel_origin, places)?.id ?? null,
+      item_travel_destination_place_id: placeForTravel(value.travel_destination_place_id, value.travel_destination, places)?.id ?? null,
       item_travel_origin: value.travel_origin.trim(),
       item_travel_destination: value.travel_destination.trim(),
       item_travel_uses_toll_road: value.travel_uses_toll_road,
@@ -258,11 +265,13 @@ export default function SharedTripPage({
     <fieldset className="itinerary-group-field"><legend>行動グループ（担当者）</legend><p className="field-hint">同じ人の組み合わせを選んだ予定は、同じグループにまとまります。</p><div className="participant-options"><label className="participant-option-all"><input type="checkbox" checked={hasAllParticipants(value.assigneeIds, participantIds)} onChange={(e) => setValue({ ...value, assigneeIds: e.target.checked ? participantIds : [] })} />全員</label>{participants.map((person) => <label key={person.id}><input type="checkbox" checked={value.assigneeIds.includes(person.id)} onChange={() => setValue({ ...value, assigneeIds: toggle(value.assigneeIds, person.id) })} />{person.display_name}</label>)}</div></fieldset>
     <label>メモ<textarea value={value.notes} onChange={(e) => setValue({ ...value, notes: e.target.value })} /></label>
   </>;
-  const travelFields = (value: TravelValues, setValue: (value: TravelValues) => void) => <div className="travel-fields">
-    <datalist id="trip-places-options">{places.map((place) => <option key={place.id} value={place.name} />)}</datalist>
+  const travelFields = (value: TravelValues, setValue: (value: TravelValues) => void) => {
+    const originPlaceId = placeForTravel(value.travel_origin_place_id, value.travel_origin, places)?.id ?? "";
+    const destinationPlaceId = placeForTravel(value.travel_destination_place_id, value.travel_destination, places)?.id ?? "";
+    return <div className="travel-fields">
     <div className="travel-route-fields">
-      <label>出発地<input required list="trip-places-options" value={value.travel_origin} placeholder="登録場所から選択／自由入力" onChange={(e) => setValue({ ...value, travel_origin: e.target.value })} /></label>
-      <label>目的地<input required list="trip-places-options" value={value.travel_destination} placeholder="登録場所から選択／自由入力" onChange={(e) => setValue({ ...value, travel_destination: e.target.value })} /></label>
+      <label>出発地（登録場所）<select value={originPlaceId} onChange={(e) => { const place = places.find((item) => item.id === e.target.value); setValue({ ...value, travel_origin_place_id: place?.id ?? null, travel_origin: place?.name ?? value.travel_origin }); }}><option value="">自由入力・未選択</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select><input required={!originPlaceId} value={value.travel_origin} placeholder="自由入力する場合はこちら" onChange={(e) => setValue({ ...value, travel_origin_place_id: null, travel_origin: e.target.value })} /></label>
+      <label>目的地（登録場所）<select value={destinationPlaceId} onChange={(e) => { const place = places.find((item) => item.id === e.target.value); setValue({ ...value, travel_destination_place_id: place?.id ?? null, travel_destination: place?.name ?? value.travel_destination }); }}><option value="">自由入力・未選択</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select><input required={!destinationPlaceId} value={value.travel_destination} placeholder="自由入力する場合はこちら" onChange={(e) => setValue({ ...value, travel_destination_place_id: null, travel_destination: e.target.value })} /></label>
     </div>
     <div className="travel-field-grid">
       <label>所要時間（分）<input type="number" min="0" step="5" value={value.travel_minutes || ""} placeholder="例：45" onChange={(e) => setValue({ ...value, travel_minutes: Math.max(0, Number(e.target.value) || 0) })} /></label>
@@ -272,7 +281,8 @@ export default function SharedTripPage({
     </div>
     <label className="travel-toll-toggle"><input type="checkbox" checked={value.travel_uses_toll_road} onChange={(e) => setValue({ ...value, travel_uses_toll_road: e.target.checked })} />高速・有料道路を使う</label>
     <label>移動メモ<input value={value.travel_notes} placeholder="例：渋滞を見込んで早めに出発" onChange={(e) => setValue({ ...value, travel_notes: e.target.value })} /></label>
-  </div>;
+    </div>;
+  };
   const renderItineraryItem = (item: Itinerary, compact = false) => {
     const isCurrent = item.id === itinerary[timelineState.currentIndex]?.id;
     const isNext = item.id === itinerary[timelineState.nextIndex]?.id;
@@ -292,23 +302,31 @@ export default function SharedTripPage({
   const renderTravelSegment = (from: Itinerary, to: Itinerary, compact = false) => {
     const fromPlace = locationForItem(from);
     const toPlace = locationForItem(to);
-    if ((from.place_id && from.place_id === to.place_id) || (fromPlace && toPlace && fromPlace === toPlace)) return null;
+    if ((from.place_id && from.place_id === to.place_id) || (fromPlace && toPlace && normalizePlaceName(fromPlace) === normalizePlaceName(toPlace))) return null;
     const fromLocation = fromPlace || from.title;
     const toLocation = toPlace || to.title;
     const rawTravel = emptyTravel(to);
     const travel = { ...rawTravel, travel_origin: rawTravel.travel_origin.trim() || fromLocation, travel_destination: rawTravel.travel_destination.trim() || toLocation };
     const editing = editTravel?.id === to.id;
-    const routeUrl = routeUrlForTravel(travel);
+    const originPlace = placeForTravel(travel.travel_origin_place_id, travel.travel_origin, places);
+    const destinationPlace = placeForTravel(travel.travel_destination_place_id, travel.travel_destination, places);
+    const routeUrl = routeUrlForTravel(travel, places);
     const hasPlan = hasTravelPlan(travel);
-    const hasRoute = hasSavedRoute(rawTravel);
+    const hasRoute = Boolean(routeUrl);
+    const travelSummary = hasPlan
+      ? [travelModeLabels[travel.travel_mode] ?? travel.travel_mode, travel.travel_minutes > 0 ? durationLabel(travel.travel_minutes) : "", travel.travel_distance_km > 0 ? distanceLabel(travel.travel_distance_km) : "", travel.travel_estimated_cost > 0 ? moneyLabel(travel.travel_estimated_cost) : ""].filter(Boolean).join("・")
+      : "移動の詳細を確認";
     return <div className={`timeline-travel ${compact ? "timeline-travel-compact" : ""}`} key={`travel-${from.id}-${to.id}`}>
       <div className="timeline-travel-spacer" aria-hidden="true" /><div className="timeline-travel-rail" aria-hidden="true" />
       <div className="timeline-travel-card">
         {editing ? <form className="travel-form" onSubmit={saveTravel}><div className="travel-form-heading"><div><strong>移動区間の設定</strong><span>出発地と目的地を指定</span></div><button type="button" className="text-button travel-inline-cancel" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div>{travelFields(editTravel, (value) => setEditTravel({ ...editTravel, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>移動を保存</button><button type="button" onClick={() => setEditTravel(null)} disabled={saving}>キャンセル</button></div></form> : <>
-          <div className="timeline-travel-heading"><div><span className="timeline-travel-kicker">移動区間</span><div className="timeline-travel-route"><div><small>出発地</small><strong>{travel.travel_origin}</strong></div><span className="timeline-travel-route-divider" aria-hidden="true" /><div><small>目的地</small><strong>{travel.travel_destination}</strong></div></div></div><button className="text-button" onClick={() => setEditTravel({ id: to.id, version: to.version, ...travel })}>{hasPlan || hasRoute ? "編集" : "計画する"}</button></div>
-          {hasPlan ? <div className="timeline-travel-metrics"><span>{travelModeLabels[travel.travel_mode] ?? travel.travel_mode}</span>{travel.travel_minutes > 0 && <span>{durationLabel(travel.travel_minutes)}</span>}{travel.travel_distance_km > 0 && <span>{distanceLabel(travel.travel_distance_km)}</span>}{travel.travel_uses_toll_road && <span className="toll-badge">高速・有料</span>}{travel.travel_estimated_cost > 0 && <b>{moneyLabel(travel.travel_estimated_cost)}</b>}</div> : <p className="timeline-travel-empty">所要時間・距離・費用を登録できます。</p>}
-          {routeUrl && <div className="timeline-travel-links"><a href={routeUrl} target="_blank" rel="noreferrer">Googleマップでルートを確認・共有</a></div>}
-          {travel.travel_notes && <p className="timeline-travel-note">{travel.travel_notes}</p>}
+          <div className="timeline-travel-heading"><div><span className="timeline-travel-kicker">移動区間</span><strong className="timeline-travel-collapsed-summary">{travelSummary}</strong></div><button className="text-button" onClick={() => setEditTravel({ id: to.id, version: to.version, ...travel })}>{hasPlan || hasRoute ? "編集" : "計画する"}</button></div>
+          <details className="timeline-travel-details"><summary>詳細を表示</summary>
+            {originPlace && destinationPlace ? <div className="timeline-travel-route"><div><small>出発地</small><strong>{originPlace.name}</strong></div><span className="timeline-travel-route-divider" aria-hidden="true" /><div><small>目的地</small><strong>{destinationPlace.name}</strong></div></div> : <p className="timeline-travel-empty">出発地と目的地の両方を登録場所に紐づけると、ルートを確認できます。</p>}
+            {hasPlan ? <div className="timeline-travel-metrics"><span>{travelModeLabels[travel.travel_mode] ?? travel.travel_mode}</span>{travel.travel_minutes > 0 && <span>{durationLabel(travel.travel_minutes)}</span>}{travel.travel_distance_km > 0 && <span>{distanceLabel(travel.travel_distance_km)}</span>}{travel.travel_uses_toll_road && <span className="toll-badge">高速・有料</span>}{travel.travel_estimated_cost > 0 && <b>{moneyLabel(travel.travel_estimated_cost)}</b>}</div> : <p className="timeline-travel-empty">所要時間・距離・費用を登録できます。</p>}
+            {routeUrl && <div className="timeline-travel-links"><a href={routeUrl} target="_blank" rel="noreferrer">Googleマップでルートを確認・共有（{travel.travel_uses_toll_road ? "高速利用可" : "高速を避ける"}）</a></div>}
+            {travel.travel_notes && <p className="timeline-travel-note">{travel.travel_notes}</p>}
+          </details>
         </>}
       </div>
     </div>;
@@ -332,7 +350,7 @@ export default function SharedTripPage({
       {itineraryView === "timeline" ? <div className="timeline">{renderTimeline(itinerary)}</div> : renderGroupedItinerary()}{!itinerary.length && <p className="empty-state">まだ予定はありません。</p>}</section>}
     {show("packing") && <section id="packing" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>PACKING</p><h2>持ち物</h2></div></div>
       <details className="add-drawer"><summary>＋ 持ち物を追加</summary><form className="draft-form compact-form" onSubmit={(e) => savePacking(e)}><input required value={packingDraft.name} placeholder="持ち物名" onChange={(e) => setPackingDraft({ ...packingDraft, name: e.target.value })} /><input value={packingDraft.memo} placeholder="担当者・数量など" onChange={(e) => setPackingDraft({ ...packingDraft, memo: e.target.value })} /><button className="save-button" disabled={saving}>保存</button></form></details>
-      {packing.map((item) => editPacking?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => savePacking(e, true)}><span className="editing-badge">編集中</span><input value={editPacking.name} onChange={(e) => setEditPacking({ ...editPacking, name: e.target.value })} /><input value={editPacking.memo} onChange={(e) => setEditPacking({ ...editPacking, memo: e.target.value })} /><label className="ready-toggle"><input type="checkbox" checked={editPacking.is_ready} onChange={(e) => setEditPacking({ ...editPacking, is_ready: e.target.checked })} />準備できた</label><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditPacking(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("packing_items", item, item.name, () => setEditPacking(null))}>削除</button></div></form> : <div className="saved-row packing-row" key={item.id}><label className="packing-check"><input type="checkbox" checked={item.is_ready} onChange={() => void togglePacking(item)} disabled={saving} /><span className={`packing-state ${item.is_ready ? "ready" : "todo"}`}>{item.is_ready ? "準備済み" : "未準備"}</span></label><div className="packing-copy"><strong>{item.name}</strong>{item.memo && <span>{item.memo}</span>}</div><button className="edit-button" onClick={() => setEditPacking(item)}>編集</button></div>)}{!packing.length && <p className="empty-state">まだ持ち物はありません。</p>}</section>}
+      {packing.map((item) => editPacking?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => savePacking(e, true)}><span className="editing-badge">編集中</span><input value={editPacking.name} onChange={(e) => setEditPacking({ ...editPacking, name: e.target.value })} /><input value={editPacking.memo} onChange={(e) => setEditPacking({ ...editPacking, memo: e.target.value })} /><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditPacking(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("packing_items", item, item.name, () => setEditPacking(null))}>削除</button></div></form> : <div className="saved-row packing-row" key={item.id}><label className="packing-check"><input type="checkbox" checked={item.is_ready} onChange={() => void togglePacking(item)} disabled={saving} /><span className={`packing-state ${item.is_ready ? "ready" : "todo"}`}>{item.is_ready ? "準備済み" : "未準備"}</span></label><div className="packing-copy"><strong>{item.name}</strong>{item.memo && <span>{item.memo}</span>}</div><button className="edit-button" onClick={() => setEditPacking(item)}>編集</button></div>)}{!packing.length && <p className="empty-state">まだ持ち物はありません。</p>}</section>}
     {show("notes") && <section id="notes" className="shared-panel confirmed-panel"><div className="shared-heading"><div><p>NOTES</p><h2>共有メモ</h2></div></div>
       <details className="add-drawer"><summary>＋ メモを追加</summary><form className="draft-form" onSubmit={(e) => saveNote(e)}><input required value={noteDraft.title} placeholder="メモの題名" onChange={(e) => setNoteDraft({ ...noteDraft, title: e.target.value })} /><textarea value={noteDraft.body} placeholder="内容" onChange={(e) => setNoteDraft({ ...noteDraft, body: e.target.value })} /><button className="save-button" disabled={saving}>このメモを保存</button></form></details>
       {notes.map((item) => editNote?.id === item.id ? <form className="draft-form editing-panel" key={item.id} onSubmit={(e) => saveNote(e, true)}><span className="editing-badge">編集中</span><input value={editNote.title} onChange={(e) => setEditNote({ ...editNote, title: e.target.value })} /><textarea value={editNote.body} onChange={(e) => setEditNote({ ...editNote, body: e.target.value })} /><div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditNote(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("shared_notes", item, item.title, () => setEditNote(null))}>削除</button></div></form> : <div className="saved-row" key={item.id}><button className="edit-button" onClick={() => setEditNote(item)}>編集</button><strong>{item.title}</strong><span>{item.body}</span></div>)}{!notes.length && <p className="empty-state">まだ共有メモはありません。</p>}</section>}
