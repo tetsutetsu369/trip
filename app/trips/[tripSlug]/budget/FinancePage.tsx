@@ -16,6 +16,15 @@ type DraftItem = { name: string; category: string; net_amount: number; tax_rate:
 
 const money = (value: number) => new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 }).format(value || 0);
 const today = () => new Date().toISOString().slice(0, 10);
+type BudgetSettings = Record<string, unknown>;
+type TripSettings = { budget: BudgetSettings | null; version: number };
+const budgetAmount = (value: unknown) => {
+  const amount = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0;
+};
+const budgetSettingsOf = (value: unknown): BudgetSettings => value && typeof value === "object" && !Array.isArray(value) ? value as BudgetSettings : {};
+const storedBudgetPerPerson = (settings: BudgetSettings) => budgetAmount(settings.purchasePerBudget ?? settings.purchasePerPerson ?? 0);
+const isVariablePurchase = (purchase: Purchase) => purchase.category !== "lodging" && purchase.category !== "activity";
 const categories = ["food", "equipment", "supplies", "lodging", "activity", "transport", "other"] as const;
 const categoryLabel: Record<string, string> = { food: "食費", equipment: "備品", supplies: "消耗品", lodging: "宿泊", activity: "遊び", transport: "移動", receipt: "レシート", other: "その他" };
 
@@ -27,6 +36,12 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [shares, setShares] = useState<Share[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>({});
+  const [budgetPerPerson, setBudgetPerPerson] = useState(0);
+  const [budgetDraft, setBudgetDraft] = useState(0);
+  const [settingsVersion, setSettingsVersion] = useState<number | null>(null);
+  const [budgetReady, setBudgetReady] = useState(false);
+  const [budgetDraftDirty, setBudgetDraftDirty] = useState(false);
   const [purchaseDraft, setPurchaseDraft] = useState({ name: "", category: "food", planned_amount: 0, memo: "" });
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -38,7 +53,8 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   const nameOf = (id: string | null) => people.find((person) => person.id === id)?.name ?? "未設定";
   const load = async (message = "みんなに共有済み") => {
     if (!supabase) { setStatus("Supabase未接続"); return; }
-    const [purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult] = await Promise.all([
+    const [settingsResult, purchaseResult, receiptResult, itemResult, expenseResult, shareResult, settlementResult, memberResult] = await Promise.all([
+      supabase.from("trip_settings").select("budget,version").eq("trip_id", tripId).maybeSingle<TripSettings>(),
       supabase.from("purchases").select("id,name,category,planned_amount,purchased_amount,is_purchased,memo,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("receipts").select("id,store_name,purchased_on,payer_id,memo").eq("trip_id", tripId).order("purchased_on", { ascending: false }),
       supabase.from("receipt_items").select("id,receipt_id,name,category,net_amount,tax_rate,tax_amount,gross_amount"),
@@ -47,7 +63,14 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
       supabase.from("settlements").select("id,from_user_id,to_user_id,amount,status").eq("trip_id", tripId).order("created_at", { ascending: false }),
       supabase.from("trip_members").select("user_id").eq("trip_id", tripId).eq("status", "approved"),
     ]);
-    if (purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error) { setStatus("費用データを読み込めませんでした"); return; }
+    if (settingsResult.error || purchaseResult.error || receiptResult.error || itemResult.error || expenseResult.error || shareResult.error || settlementResult.error || memberResult.error) { setStatus("費用データを読み込めませんでした"); return; }
+    const savedBudget = budgetSettingsOf(settingsResult.data?.budget);
+    const savedBudgetPerPerson = storedBudgetPerPerson(savedBudget);
+    setBudgetSettings(savedBudget);
+    setBudgetPerPerson(savedBudgetPerPerson);
+    if (!budgetDraftDirty) setBudgetDraft(savedBudgetPerPerson);
+    setSettingsVersion(settingsResult.data?.version ?? null);
+    setBudgetReady(true);
     const userIds = (memberResult.data ?? []).map((member) => member.user_id);
     const profileResult = userIds.length ? await supabase.from("profiles").select("id,nickname,line_display_name").in("id", userIds) : { data: [], error: null };
     if (profileResult.error) { setStatus("参加者を読み込めませんでした"); return; }
@@ -68,6 +91,16 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     purchased: purchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0),
     expenses: expenses.reduce((sum, expense) => sum + expense.amount, 0),
   }), [purchases, expenses]);
+  const budgetTotals = useMemo(() => {
+    const participantCount = Math.max(1, people.length);
+    const variablePurchases = purchases.filter(isVariablePurchase);
+    const total = budgetPerPerson * participantCount;
+    const allocated = variablePurchases.reduce((sum, purchase) => sum + purchase.planned_amount, 0);
+    const purchased = variablePurchases.reduce((sum, purchase) => sum + (purchase.is_purchased ? purchase.purchased_amount : 0), 0);
+    const lodgingPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "lodging").reduce((sum, expense) => sum + expense.amount, 0);
+    const activityPaid = expenses.filter((expense) => expense.payment_status === "paid" && expense.category === "activity").reduce((sum, expense) => sum + expense.amount, 0);
+    return { participantCount, total, allocated, purchased, remaining: total - allocated, lodgingPaid, activityPaid };
+  }, [budgetPerPerson, expenses, people.length, purchases]);
 
   const balances = useMemo(() => {
     const result = new Map<string, number>(people.map((person) => [person.id, 0]));
@@ -103,6 +136,30 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     const { error } = await supabase.from("purchases").insert({ trip_id: tripId, name: purchaseDraft.name.trim(), category: purchaseDraft.category, planned_amount: purchaseDraft.planned_amount, purchased_amount: 0, is_purchased: false, memo: purchaseDraft.memo.trim(), created_by: userId });
     setSaving(false); if (error) { setStatus("購入品を追加できませんでした"); return; }
     setPurchaseDraft({ name: "", category: "food", planned_amount: 0, memo: "" }); await load("購入品を追加しました");
+  };
+  const saveBudget = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !budgetReady) return;
+    setSaving(true);
+    const nextValue = budgetAmount(budgetDraft);
+    const nextBudget = { ...budgetSettings, purchasePerBudget: nextValue };
+    const result = settingsVersion === null
+      ? await supabase.from("trip_settings").insert({ trip_id: tripId, budget: nextBudget, updated_by: userId }).select("version").maybeSingle<{ version: number }>()
+      : await supabase.from("trip_settings").update({ budget: nextBudget, updated_by: userId }).eq("trip_id", tripId).eq("version", settingsVersion).select("version").maybeSingle<{ version: number }>();
+    setSaving(false);
+    if (result.error) {
+      await load(result.error.code === "23505" ? "他の人が先に予算を保存しました" : "予算を保存できませんでした");
+      return;
+    }
+    if (!result.data) {
+      await load("他の人が先に予算を保存しました");
+      return;
+    }
+    setBudgetSettings(nextBudget);
+    setBudgetPerPerson(nextValue);
+    setBudgetDraftDirty(false);
+    setSettingsVersion(result.data.version);
+    setStatus("予算を保存しました");
   };
   const togglePurchase = async (purchase: Purchase) => {
     if (!supabase) return; setSaving(true);
@@ -160,6 +217,30 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
   return <main className="budget-shell finance-shell"><TripHeader tripSlug={tripSlug} tripName={tripName} avatarUrl={avatarUrl} /><p className="save-status" role="status">{status}</p>
     <section className="budget-hero"><p className="kicker">COST & SETTLEMENT</p><h1>費用と精算</h1><p>{tripName}</p></section>
     <section className="summary-grid finance-summary"><Summary label="購入予定" value={totals.planned} /><Summary label="購入済み" value={totals.purchased} tone="paid" /><Summary label="立替費用" value={totals.expenses} /><Summary label="精算候補" value={suggestions.reduce((sum, item) => sum + item.amount, 0)} tone="due" /></section>
+    <h2 className="budget-title">食費・雑費の予算</h2>
+    <section className="panel budget-planner">
+      <div className="budget-planner-heading">
+        <div>
+          <h3>1人当たりの予算</h3>
+          <p>宿泊代とアクティビティ代を除く、食費・備品・消耗品・その他の買い物に使う枠です。</p>
+        </div>
+        <form className="budget-planner-form" onSubmit={saveBudget}>
+          <label htmlFor="budget-per-person"><span>予算（円）</span><input id="budget-per-person" type="number" min="0" step="100" value={budgetDraft} onChange={(event) => { setBudgetDraft(budgetAmount(event.target.value)); setBudgetDraftDirty(true); }} disabled={!budgetReady || saving} /></label>
+          <button className="save-button" disabled={!budgetReady || saving}>{saving ? "保存中…" : "予算を保存"}</button>
+        </form>
+      </div>
+      <div className="budget-planner-metrics">
+        <BudgetMetric label="予算合計" value={money(budgetTotals.total)} />
+        <BudgetMetric label="リスト配分済み" value={money(budgetTotals.allocated)} />
+        <BudgetMetric label="購入済み（リスト）" value={money(budgetTotals.purchased)} />
+        <BudgetMetric label={budgetTotals.remaining < 0 ? "予算オーバー" : "配分できる残り"} value={money(Math.abs(budgetTotals.remaining))} tone={budgetTotals.remaining < 0 ? "over" : "remaining"} />
+      </div>
+      <div className="budget-fixed-costs">
+        <span>支払済み固定費（この予算枠の対象外）</span>
+        <div><span>宿泊代</span><b>{money(budgetTotals.lodgingPaid)}</b><span>アクティビティ代</span><b>{money(budgetTotals.activityPaid)}</b></div>
+      </div>
+      <p className="budget-planner-note">承認済み参加者 {budgetTotals.participantCount}人 × 1人当たり予算で計算。買い物リストの宿泊・アクティビティ項目はこの枠から除外します。</p>
+    </section>
 
     <h2 className="budget-title">買い物リスト</h2>
     <section className="panel finance-panel"><form className="finance-inline-form" onSubmit={addPurchase}><input required placeholder="購入するもの" value={purchaseDraft.name} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, name: event.target.value })} /><select value={purchaseDraft.category} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, category: event.target.value })}>{categories.map((category) => <option key={category} value={category}>{categoryLabel[category]}</option>)}</select><input type="number" min="0" placeholder="予定額" value={purchaseDraft.planned_amount || ""} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, planned_amount: Math.max(0, Number(event.target.value) || 0) })} /><button className="save-button" disabled={saving}>追加</button></form><div className="purchase-list-section"><h3>買い物リスト</h3><div className="finance-list">{pendingPurchases.map(purchaseRow)}</div>{!pendingPurchases.length && <p className="empty-state">買い物リストは空です。</p>}</div><div className="purchase-list-section purchased-list-section"><h3>購入済み</h3><div className="finance-list">{completedPurchases.map(purchaseRow)}</div>{!completedPurchases.length && <p className="empty-state">購入済みの商品はありません。</p>}</div></section>
@@ -177,3 +258,4 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
 }
 
 function Summary({ label, value, tone = "" }: { label: string; value: number; tone?: string }) { return <div className={`summary-card ${tone}`}><span>{label}</span><strong>{money(value)}</strong></div>; }
+function BudgetMetric({ label, value, tone = "" }: { label: string; value: string; tone?: string }) { return <div className={"budget-planner-metric " + tone}><span>{label}</span><strong>{value}</strong></div>; }
