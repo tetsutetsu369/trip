@@ -5,7 +5,7 @@ import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 type ChangeLog = { id: string; actor_user_id: string | null; table_name: string; action: string; changed_fields: Record<string, unknown>; created_at: string };
 
-const tableLabel: Record<string, string> = { itinerary_items: "旅程", packing_items: "持ち物", shared_notes: "共有メモ", purchases: "購入品", receipts: "レシート", receipt_items: "レシート明細", expenses: "費用", expense_shares: "負担額", settlements: "精算", trip_places: "行き先", trip_settings: "費用設定" };
+const tableLabel: Record<string, string> = { itinerary_items: "旅程", packing_items: "持ち物", shared_notes: "共有メモ", purchases: "購入品", receipts: "レシート", receipt_items: "レシート明細", expenses: "費用", expense_shares: "負担額", settlements: "精算", trip_places: "場所", trip_settings: "費用設定" };
 const actionLabel: Record<string, string> = { insert: "追加", update: "更新", delete: "削除", restore: "復元" };
 
 export default function ChangeLogPanel({ tripId }: { tripId: string }) {
