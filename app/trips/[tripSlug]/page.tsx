@@ -8,13 +8,11 @@ import TripHeader from "@/app/components/TripHeader";
 import TripTabs from "@/app/components/TripTabs";
 
 type ItineraryPreview = { event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null };
-type PlacePreview = { id: string; name: string; category: string; address: string; website_url: string; map_url: string };
+type PlacePreview = { id: string; name: string; map_url: string };
 type PackingPreview = { name: string; is_ready: boolean };
 type NotePreview = { title: string; body: string };
 type PurchasePreview = { planned_amount: number; purchased_amount: number; is_purchased: boolean };
 type ExpensePreview = { amount: number; payment_status: string; settlement_status: string };
-
-const placeCategory: Record<string, string> = { lodging: "泊まる", food: "食べる", activity: "遊ぶ", shopping: "買い出し", transit: "移動", other: "その他" };
 
 export default async function TripPortalPage({ params }: { params: Promise<{ tripSlug: string }> }) {
   const { tripSlug } = await params;
@@ -34,7 +32,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       if (!membership || membership.status !== "approved") redirect(`/pending?trip=${tripSlug}`);
       const [itineraryResult, placesResult, packingResult, noteResult, purchaseResult, expenseResult, profileResult] = await Promise.all([
         supabase.from("itinerary_items").select("event_date,event_time,title,place,place_id").eq("trip_id", tripId).order("event_date").order("event_time").limit(8),
-        supabase.from("trip_places").select("id,name,category,address,website_url,map_url").eq("trip_id", tripId).order("name").limit(6),
+        supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name").limit(6),
         supabase.from("packing_items").select("name,is_ready").eq("trip_id", tripId).order("created_at").limit(4),
         supabase.from("shared_notes").select("title,body").eq("trip_id", tripId).order("updated_at", { ascending: false }).limit(1).maybeSingle<NotePreview>(),
         supabase.from("purchases").select("planned_amount,purchased_amount,is_purchased").eq("trip_id", tripId),
@@ -69,7 +67,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       <PreviewCard href={`/trips/${site.slug}/prep`} title="持ち物" meta="PACKING">{preview.packing.length ? <ul className="portal-check-list">{preview.packing.map((item) => <li key={item.name}>{item.is_ready ? "✓" : "○"} {item.name}</li>)}</ul> : <p>まだ持ち物はありません</p>}</PreviewCard>
       <PreviewCard href={`/trips/${site.slug}/prep`} title="共有メモ" meta="NOTES">{preview.note ? <><strong>{preview.note.title}</strong><p>{preview.note.body || "内容はまだありません"}</p></> : <p>まだ共有メモはありません</p>}</PreviewCard>
     </div></section>
-    <section className="home-places" aria-labelledby="home-places-heading"><div className="trip-section-heading"><div><p>PLACES</p><h2 id="home-places-heading">行き先</h2></div><Link href={`/trips/${site.slug}/itinerary`}>一覧・編集</Link></div><div className="home-place-grid">{preview.places.slice(0, 4).map((place) => <article className="home-place-card" key={place.id}><span>{placeCategory[place.category] ?? "その他"}</span><h3>{place.name}</h3><p>{place.address || "住所未設定"}</p><div>{place.website_url && <a href={place.website_url} target="_blank" rel="noreferrer">公式</a>}{place.map_url && <a href={place.map_url} target="_blank" rel="noreferrer">地図</a>}</div></article>)}</div>{!preview.places.length && <p className="empty-state">旅程タブから行き先を登録できます。</p>}</section>
+    <section className="home-places" aria-labelledby="home-places-heading"><div className="trip-section-heading"><div><p>PLACES</p><h2 id="home-places-heading">行き先</h2></div><Link href={`/trips/${site.slug}/itinerary`}>一覧・編集</Link></div><div className="home-place-grid">{preview.places.slice(0, 4).map((place) => <article className="home-place-card" key={place.id}><h3>{place.name}</h3><div>{place.map_url && <a href={place.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}</div></article>)}</div>{!preview.places.length && <p className="empty-state">旅程タブから行き先を登録できます。</p>}</section>
     <TripTabs tripSlug={tripSlug} active="home" />
   </main>;
 }

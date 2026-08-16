@@ -12,7 +12,7 @@ type Person = { id: string; display_name: string; avatar_color: string | null };
 type Itinerary = { id: string; event_date: string | null; event_time: string | null; title: string; place: string; place_id: string | null; group_label: string; notes: string; sort_order: number; version: number };
 type Packing = { id: string; name: string; memo: string; is_ready: boolean; version: number };
 type Note = { id: string; title: string; body: string; version: number };
-type Place = { id: string; name: string; category: string; address: string; website_url: string; map_url: string };
+type Place = { id: string; name: string; map_url: string };
 type Assignment = { itinerary_item_id: string; participant_id: string };
 type Draft = { event_date: string; event_time: string; title: string; place: string; place_id: string | null; notes: string; assigneeIds: string[] };
 
@@ -66,7 +66,7 @@ export default function SharedTripPage({
       supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
-      supabase.from("trip_places").select("id,name,category,address,website_url,map_url").eq("trip_id", tripId).order("name"),
+      supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name"),
     ]);
     if (i.error || p.error || n.error || placesResult.error) { setStatus("読み込めませんでした"); return; }
     const items = [...(i.data ?? [])].sort((a, b) => `${a.event_date ?? "9999"}${a.event_time ?? "99"}`.localeCompare(`${b.event_date ?? "9999"}${b.event_time ?? "99"}`) || a.sort_order - b.sort_order);
@@ -104,7 +104,7 @@ export default function SharedTripPage({
   }, [itineraryGroups, selectedGroupKey]);
   const locationForItem = (item: Itinerary) => {
     const place = item.place_id ? places.find((candidate) => candidate.id === item.place_id) : null;
-    return (place?.address || place?.name || item.place).trim();
+    return (place?.name || item.place).trim();
   };
   const routeUrlForItems = (items: Itinerary[]) => {
     const eventDates = new Set(items.map((item) => item.event_date ?? tripDates.start));
@@ -219,13 +219,14 @@ export default function SharedTripPage({
     const isCurrent = item.id === itinerary[timelineState.currentIndex]?.id;
     const isNext = item.id === itinerary[timelineState.nextIndex]?.id;
     const groupLabel = itemGroup(item).label;
+    const place = item.place_id ? places.find((candidate) => candidate.id === item.place_id) : null;
     return <article className={`timeline-item ${compact ? "timeline-item-compact" : ""} ${isCurrent ? "is-current" : ""} ${isNext ? "is-next" : ""}`} key={item.id}>
       <div className="timeline-time"><strong>{item.event_time?.slice(0, 5) || "未定"}</strong><span>{item.event_date?.replaceAll("-", "/")}</span></div><div className="timeline-dot" aria-hidden="true" />
       <div className="timeline-card">{isCurrent && <span className="timeline-state">いまここ</span>}{isNext && <span className="timeline-state next-state">次</span>}
         {editItinerary?.id === item.id ? <form className="draft-form editing-panel" onSubmit={saveItineraryEdit}><span className="editing-badge">編集中</span>{itineraryFields(editItinerary, (value) => setEditItinerary({ ...editItinerary, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditItinerary(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("itinerary_items", item, item.title, () => setEditItinerary(null))}>削除</button></div></form> : <>
           <button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, place_id: item.place_id, notes: item.notes, assigneeIds: selected(item.id) })}>編集</button>
           <div className="timeline-card-labels"><span className={`itinerary-group-badge ${groupLabel === DEFAULT_GROUP_LABEL ? "is-common" : ""}`}>{groupLabel}</span></div>
-          <h3>{item.title}</h3>{item.place_id && <p className="timeline-place">{places.find((place) => place.id === item.place_id)?.name ?? item.place}</p>}{!item.place_id && item.place && <p className="timeline-place">{item.place}</p>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ "--assignee-color": people.get(id)?.avatar_color ?? "#55a99f" } as CSSProperties}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div>
+          <h3>{item.title}</h3>{place && <p className="timeline-place">{place.name}</p>}{!place && item.place && <p className="timeline-place">{item.place}</p>}{place?.map_url && <a className="timeline-map-link" href={place.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ "--assignee-color": people.get(id)?.avatar_color ?? "#55a99f" } as CSSProperties}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div>
         </>}
       </div>
     </article>;

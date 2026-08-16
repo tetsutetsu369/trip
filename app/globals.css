@@ -32,6 +32,8 @@
 .inline-actions{flex-wrap:wrap}
 .inline-actions .save-button{width:auto;justify-self:auto}
 .field-hint{margin:-2px 0 8px;color:var(--muted);font-size:.68rem;line-height:1.6}
+.timeline-map-link{display:inline-flex;margin-top:6px;color:var(--accent);font-size:.7rem;text-decoration:none}
+.place-link-missing{color:var(--muted);font-size:.7rem}
 .itinerary-group-field{display:grid;gap:0}
 .participant-option-all{border-color:#e2793f66!important;background:#e2793f1c!important;color:var(--ink)!important}
 .itinerary-view-toolbar{display:grid;gap:8px;margin:0 0 16px}
