@@ -15,6 +15,7 @@ type Packing = { id: string; name: string; memo: string; is_ready: boolean; vers
 type Note = { id: string; title: string; body: string; version: number };
 type Place = { id: string; name: string; map_url: string };
 type Assignment = { itinerary_item_id: string; participant_id: string };
+type LinkedExpense = { id: string; title: string; planned_amount: number; amount: number; payment_status: string; itinerary_item_id: string | null };
 type Draft = { event_date: string; event_time: string; title: string; place: string; place_id: string | null; notes: string; assigneeIds: string[] } & TravelValues;
 
 type SaveResult = { status: "ok" | "conflict" | "forbidden" | "invalid"; id?: string; version?: number };
@@ -62,6 +63,7 @@ export default function SharedTripPage({
   const people = useMemo(() => new Map(participants.map((person) => [person.id, person])), [participants]);
   const participantIds = useMemo(() => participants.map((person) => person.id), [participants]);
   const [itinerary, setItinerary] = useState<Itinerary[]>([]);
+  const [linkedExpenses, setLinkedExpenses] = useState<LinkedExpense[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [packing, setPacking] = useState<Packing[]>([]);
@@ -81,22 +83,25 @@ export default function SharedTripPage({
 
   const load = async (message = "") => {
     if (!supabase) return;
-    const [i, p, n, placesResult] = await Promise.all([
+    const [i, p, n, placesResult, expenseResult] = await Promise.all([
       supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label,notes,sort_order,version,travel_minutes,travel_distance_km,travel_mode,travel_origin_place_id,travel_destination_place_id,travel_origin,travel_destination,travel_uses_toll_road,travel_estimated_cost,travel_notes").eq("trip_id", tripId),
       supabase.from("packing_items").select("id,name,memo,is_ready,version").eq("trip_id", tripId).order("created_at"),
       supabase.from("shared_notes").select("id,title,body,version").eq("trip_id", tripId).order("updated_at", { ascending: false }),
       supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name"),
+      supabase.from("expenses").select("id,title,planned_amount,amount,payment_status,itinerary_item_id").eq("trip_id", tripId).not("itinerary_item_id", "is", null),
     ]);
-    if (i.error || p.error || n.error || placesResult.error) { setStatus("読み込めませんでした"); return; }
+    if (i.error || p.error || n.error || placesResult.error || expenseResult.error) { setStatus("読み込めませんでした"); return; }
     const items = [...(i.data ?? [])].sort((a, b) => `${a.event_date ?? "9999"}${a.event_time ?? "99"}`.localeCompare(`${b.event_date ?? "9999"}${b.event_time ?? "99"}`) || a.sort_order - b.sort_order);
     const a = items.length ? await supabase.from("itinerary_assignees").select("itinerary_item_id,participant_id").in("itinerary_item_id", items.map((item) => item.id)) : { data: [], error: null };
     if (a.error) { setStatus("担当者データを読み込めませんでした"); return; }
-    setItinerary(items); setPlaces(placesResult.data ?? []); setPacking(p.data ?? []); setNotes(n.data ?? []); setAssignments(a.data ?? []); setStatus(message);
+    setItinerary(items); setPlaces(placesResult.data ?? []); setPacking(p.data ?? []); setNotes(n.data ?? []); setAssignments(a.data ?? []); setLinkedExpenses(expenseResult.data ?? []); setStatus(message);
   };
   useEffect(() => { void load(); }, [tripId]);
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
 
   const selected = (id: string) => assignments.filter((a) => a.itinerary_item_id === id).map((a) => a.participant_id);
+  const expensesForItem = (id: string) => linkedExpenses.filter((expense) => expense.itinerary_item_id === id);
+  const linkedExpenseAmount = (expense: LinkedExpense) => expense.payment_status === "paid" ? expense.amount : expense.planned_amount;
   const toggle = (ids: string[], id: string) => ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
   const itineraryGroupData = useMemo(() => {
     const byItemId = new Map<string, { key: string; label: string }>();
@@ -288,13 +293,14 @@ export default function SharedTripPage({
     const isNext = item.id === itinerary[timelineState.nextIndex]?.id;
 
     const place = item.place_id ? places.find((candidate) => candidate.id === item.place_id) : null;
+    const itemExpenses = expensesForItem(item.id);
     return <article className={`timeline-item ${compact ? "timeline-item-compact" : ""} ${isCurrent ? "is-current" : ""} ${isNext ? "is-next" : ""}`} key={item.id}>
       <div className="timeline-time"><strong>{item.event_time?.slice(0, 5) || "未定"}</strong><span>{item.event_date?.replaceAll("-", "/")}</span></div><div className="timeline-dot" aria-hidden="true" />
       <div className="timeline-card">{isCurrent && <span className="timeline-state">いまここ</span>}{isNext && <span className="timeline-state next-state">次</span>}
         {editItinerary?.id === item.id ? <form className="draft-form editing-panel" onSubmit={saveItineraryEdit}><span className="editing-badge">編集中</span>{itineraryFields(editItinerary, (value) => setEditItinerary({ ...editItinerary, ...value }))}<div className="inline-actions"><button className="save-button" disabled={saving}>変更を保存</button><button type="button" onClick={() => setEditItinerary(null)}>キャンセル</button><button type="button" className="delete-action" disabled={saving} onClick={() => remove("itinerary_items", item, item.title, () => setEditItinerary(null))}>削除</button></div></form> : <>
           <button className="edit-button" onClick={() => setEditItinerary({ id: item.id, version: item.version, event_date: item.event_date || tripDates.start, event_time: item.event_time?.slice(0, 5) || "", title: item.title, place: item.place, place_id: item.place_id, notes: item.notes, assigneeIds: selected(item.id), ...emptyTravel(item) })}>編集</button>
 
-          <h3>{item.title}</h3>{place && <p className="timeline-place">{place.name}</p>}{!place && item.place && <p className="timeline-place">{item.place}</p>}{place?.map_url && <a className="timeline-map-link" href={place.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ "--assignee-color": people.get(id)?.avatar_color ?? "#55a99f" } as CSSProperties}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div>
+          <h3>{item.title}</h3>{place && <p className="timeline-place">{place.name}</p>}{!place && item.place && <p className="timeline-place">{item.place}</p>}{place?.map_url && <a className="timeline-map-link" href={place.map_url} target="_blank" rel="noreferrer">Googleマップを開く</a>}{item.notes && <p>{item.notes}</p>}<div className="assignee-chips">{selected(item.id).length ? selected(item.id).map((id) => <span key={id} style={{ "--assignee-color": people.get(id)?.avatar_color ?? "#55a99f" } as CSSProperties}>{people.get(id)?.display_name}</span>) : <span className="unassigned">担当者未設定</span>}</div>{itemExpenses.length > 0 && <div className="timeline-linked-expenses"><span>関連費用</span>{itemExpenses.map((expense) => <div key={expense.id}><strong>{expense.title}</strong><b>{moneyLabel(linkedExpenseAmount(expense))}</b><small>{expense.payment_status === "paid" ? "支払済み" : "予定"}</small></div>)}</div>}
         </>}
       </div>
     </article>;

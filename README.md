@@ -50,7 +50,7 @@ npm install
 npm run dev
 ```
 
-The legacy budget screen still uses browser storage until the DB-backed expense editor is implemented.
+The shared budget screen uses Supabase-backed unified expenses. Legacy browser-storage data is retained as a migration/backup compatibility layer.
 
 ## Deployment
 
