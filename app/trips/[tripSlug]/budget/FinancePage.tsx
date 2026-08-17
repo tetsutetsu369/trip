@@ -168,6 +168,11 @@ export default function FinancePage({ tripId, tripSlug, tripName, avatarUrl = nu
     setStatus(message);
   };
   useEffect(() => { void load(); }, [tripId]);
+  useEffect(() => {
+    if (!expenseDraft?.id) return;
+    const frame = window.requestAnimationFrame(() => document.querySelector<HTMLFormElement>(".expense-form")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [expenseDraft?.id]);
 
   const transportExpensesByItinerary = useMemo(() => {
     const result = new Map<string, number>();
