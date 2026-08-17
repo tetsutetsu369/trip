@@ -12,8 +12,7 @@ type ItineraryAssignmentPreview = { itinerary_item_id: string; participant_id: s
 type PlacePreview = { id: string; name: string; map_url: string };
 type PackingPreview = { name: string; is_ready: boolean };
 type NotePreview = { title: string; body: string };
-type PurchasePreview = { planned_amount: number; purchased_amount: number; is_purchased: boolean };
-type ExpensePreview = { amount: number; payment_status: string; settlement_status: string };
+type ExpensePreview = { amount: number; planned_amount: number; payment_status: string; settlement_status: string };
 type TravelPreview = { travel_estimated_cost: number };
 
 export default async function TripPortalPage({ params }: { params: Promise<{ tripSlug: string }> }) {
@@ -21,7 +20,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
   const site = getTripSiteConfig(tripSlug);
   if (!site) notFound();
 
-  let preview: { itinerary: ItineraryPreview[]; personalItinerary: ItineraryPreview[]; places: PlacePreview[]; packing: PackingPreview[]; note: NotePreview | null; purchases: PurchasePreview[]; expenses: ExpensePreview[]; travel: TravelPreview[] } = { itinerary: [], personalItinerary: [], places: [], packing: [], note: null, purchases: [], expenses: [], travel: [] };
+  let preview: { itinerary: ItineraryPreview[]; personalItinerary: ItineraryPreview[]; places: PlacePreview[]; packing: PackingPreview[]; note: NotePreview | null; expenses: ExpensePreview[]; travel: TravelPreview[] } = { itinerary: [], personalItinerary: [], places: [], packing: [], note: null, expenses: [], travel: [] };
   let avatarUrl: string | null = null;
   const supabase = await createServerSupabaseClient();
   if (supabase) {
@@ -33,17 +32,16 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       if (membershipError) throw membershipError;
       if (!membership || membership.status !== "approved") redirect(`/pending?trip=${tripSlug}`);
       const participantResult = await supabase.from("trip_participants").select("id").eq("trip_id", tripId).eq("profile_id", userData.user.id).maybeSingle<{ id: string }>();
-      const [itineraryResult, placesResult, packingResult, noteResult, purchaseResult, expenseResult, profileResult, travelResult] = await Promise.all([
+      const [itineraryResult, placesResult, packingResult, noteResult, expenseResult, profileResult, travelResult] = await Promise.all([
         supabase.from("itinerary_items").select("id,event_date,event_time,title,place,place_id,group_label").eq("trip_id", tripId).order("event_date").order("event_time"),
         supabase.from("trip_places").select("id,name,map_url").eq("trip_id", tripId).order("name").limit(6),
         supabase.from("packing_items").select("name,is_ready").eq("trip_id", tripId).order("created_at").limit(4),
         supabase.from("shared_notes").select("title,body").eq("trip_id", tripId).order("updated_at", { ascending: false }).limit(1).maybeSingle<NotePreview>(),
-        supabase.from("purchases").select("planned_amount,purchased_amount,is_purchased").eq("trip_id", tripId),
-        supabase.from("expenses").select("amount,payment_status,settlement_status").eq("trip_id", tripId),
+        supabase.from("expenses").select("amount,planned_amount,payment_status,settlement_status").eq("trip_id", tripId),
         supabase.from("profiles").select("avatar_url").eq("id", userData.user.id).maybeSingle<{ avatar_url: string | null }>(),
         supabase.from("itinerary_items").select("travel_estimated_cost").eq("trip_id", tripId),
       ]);
-      if (participantResult.error || itineraryResult.error || placesResult.error || packingResult.error || noteResult.error || purchaseResult.error || expenseResult.error || travelResult.error) throw new Error("Failed to load home data");
+      if (participantResult.error || itineraryResult.error || placesResult.error || packingResult.error || noteResult.error || expenseResult.error || travelResult.error) throw new Error("Failed to load home data");
       const itemIds = (itineraryResult.data ?? []).map((item) => item.id);
       const assignmentsResult = itemIds.length ? await supabase.from("itinerary_assignees").select("itinerary_item_id,participant_id").in("itinerary_item_id", itemIds) : { data: [] as ItineraryAssignmentPreview[], error: null };
       if (assignmentsResult.error) throw assignmentsResult.error;
@@ -52,7 +50,7 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
       const assignedItems = new Set(assignments.map((assignment) => assignment.itinerary_item_id));
       const itinerary = itineraryResult.data ?? [];
       const personalItinerary = itinerary.filter((item) => assignedToUser.has(item.id) || (!assignedItems.has(item.id) && item.group_label === "全員"));
-      preview = { itinerary, personalItinerary, places: placesResult.data ?? [], packing: packingResult.data ?? [], note: noteResult.data ?? null, purchases: purchaseResult.data ?? [], expenses: expenseResult.data ?? [], travel: travelResult.data ?? [] };
+      preview = { itinerary, personalItinerary, places: placesResult.data ?? [], packing: packingResult.data ?? [], note: noteResult.data ?? null, expenses: expenseResult.data ?? [], travel: travelResult.data ?? [] };
       avatarUrl = profileResult.data?.avatar_url ?? null;
     } catch (error) {
       if (error instanceof Error && error.message.includes("NEXT_REDIRECT")) throw error;
@@ -68,9 +66,9 @@ export default async function TripPortalPage({ params }: { params: Promise<{ tri
     ? preview.places.find((place) => place.id === next.place_id)
       ?? preview.places.find((place) => place.name.trim() === next.place.trim())
     : null;
-  const planned = preview.purchases.reduce((sum, item) => sum + item.planned_amount, 0);
-  const purchased = preview.purchases.reduce((sum, item) => sum + (item.is_purchased ? item.purchased_amount : 0), 0);
-  const expenses = preview.expenses.reduce((sum, item) => sum + item.amount, 0);
+  const planned = preview.expenses.reduce((sum, item) => sum + item.planned_amount, 0);
+  const purchased = preview.expenses.filter((item) => item.payment_status === "paid").reduce((sum, item) => sum + item.amount, 0);
+  const expenses = purchased;
   const travel = preview.travel.reduce((sum, item) => sum + item.travel_estimated_cost, 0);
 
   return <main className={`trip-portal-shell ${site.theme.heroClassName}`} style={{ "--trip-accent": site.theme.accent, "--trip-accent-dark": site.theme.accentDark, "--trip-surface": site.theme.surface, "--trip-background": site.theme.background } as CSSProperties}>

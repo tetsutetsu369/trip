@@ -116,13 +116,7 @@ export async function GET(request: Request) {
       const transfers = await Promise.all([
         admin.from("trip_members").update({ user_id: newUserId }).eq("user_id", oldUserId),
         admin.from("itinerary_items").update({ created_by: newUserId }).eq("created_by", oldUserId),
-        admin.from("receipts").update({ payer_id: newUserId }).eq("payer_id", oldUserId),
-        admin.from("receipts").update({ created_by: newUserId }).eq("created_by", oldUserId),
-        admin.from("expenses").update({ payer_id: newUserId }).eq("payer_id", oldUserId),
         admin.from("expenses").update({ created_by: newUserId }).eq("created_by", oldUserId),
-        admin.from("expense_shares").update({ user_id: newUserId }).eq("user_id", oldUserId),
-        admin.from("purchases").update({ assignee_id: newUserId }).eq("assignee_id", oldUserId),
-        admin.from("purchases").update({ created_by: newUserId }).eq("created_by", oldUserId),
         admin.from("packing_items").update({ assignee_id: newUserId }).eq("assignee_id", oldUserId),
         admin.from("shared_notes").update({ created_by: newUserId }).eq("created_by", oldUserId),
         admin.from("change_logs").update({ actor_user_id: newUserId }).eq("actor_user_id", oldUserId),
